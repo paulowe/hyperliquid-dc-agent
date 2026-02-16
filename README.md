@@ -41,8 +41,8 @@ uv run --package hyperliquid-trading-bot python trading-agent/learning_examples/
 # Run pipeline trigger tests
 make test-trigger
 
-# Compile a pipeline
-make compile-pipeline pipeline=training
+# Compile a pipeline (PIPELINE_TEMPLATE: tensorflow or xgboost)
+make compile-pipeline pipeline=training PIPELINE_TEMPLATE=tensorflow
 
 # Run all component tests
 make test-all-components
