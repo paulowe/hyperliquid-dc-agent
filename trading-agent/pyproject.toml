@@ -1,0 +1,29 @@
+[project]
+name = "hyperliquid-trading-bot"
+version = "0.1.0"
+description = "Extensible trading bot for Hyperliquid DEX"
+requires-python = ">=3.11"
+dependencies = [
+    "hyperliquid-python-sdk>=0.20.0",
+    "eth-account>=0.10.0",
+    "pyyaml>=6.0",
+    "typing-extensions>=4.0",
+    "psutil>=7.0.0",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.1.1",
+    "websockets>=15.0.1",
+    "pandas",
+    "numpy",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-mock>=3.0",
+]
+dev = [
+    "black",
+    "isort",
+    "mypy",
+]

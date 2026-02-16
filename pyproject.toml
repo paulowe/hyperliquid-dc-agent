@@ -1,0 +1,29 @@
+[project]
+name = "hyperliquid-dc-agent"
+version = "0.1.0"
+description = "Monorepo: Hyperliquid trading agent + Vertex AI ML pipelines"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Paul Owe", email = "paul.owe@owegroup.org"},
+]
+
+[tool.uv.workspace]
+members = [
+    "trading-agent",
+    "pipelines",
+    "components/bigquery-components",
+    "components/vertex-components",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-asyncio>=0.21",
+    "pytest-mock>=3.0",
+    "black",
+    "isort",
+    "mypy",
+    "pre-commit",
+]

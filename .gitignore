@@ -1,0 +1,140 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+.installed.cfg
+MANIFEST
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment and secrets
+.env
+.env.local
+.env.production
+.env.development
+env.sh
+
+# Private keys and secrets
+.private_key
+*.key
+*.pem
+private_keys/
+secrets/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+coverage/
+.nyc_output
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Compiled pipelines
+pipeline.json
+training.json
+prediction.json
+**/*pipeline.json
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+terraform/**/*.zip
+
+# Trading data and logs
+data/
+logs/
+*.log
+*.csv
+trade_history/
+performance_data/
+
+# Bot state and cache files
+state/
+cache/
+*.json.backup
+*_state.json
+*_backup.json
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-*
+
+# OS-specific files
+.DS_Store
+*.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# npm modules
+node_modules
+
+# Notebook weights/logs (large binary files)
+notebooks/logs/
+notebooks/weights/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Profiling data
+.prof
+
+# Backup files
+*.bak

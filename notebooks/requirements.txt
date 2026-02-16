@@ -1,0 +1,14 @@
+tensorflow-io
+tensorflow
+keras
+pydot
+keras_tuner
+google-cloud-bigquery
+matplotlib
+scikit-learn
+pandas
+db-dtypes
+seaborn
+plotly
+plotly[kaleido]
+nbformat>=4.2.0

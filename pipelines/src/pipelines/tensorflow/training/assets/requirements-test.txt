@@ -1,0 +1,5 @@
+# Requirements for local testing of VAE training component
+tensorflow>=2.6.0
+numpy>=1.19.0
+pytest>=6.0.0
+pytest-mock>=3.6.0 
