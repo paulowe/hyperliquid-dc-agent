@@ -75,6 +75,9 @@ class DCForecastStrategy(TradingStrategy):
         self._model: Any = None
         self._scaler_params: Optional[ScalerParams] = None
 
+        # Auto-load scaler and model from config URIs if provided
+        self._auto_load_from_config()
+
         # Counters and tracking
         self._total_events = 0
         self._pdcc_down_count = 0
@@ -83,6 +86,51 @@ class DCForecastStrategy(TradingStrategy):
         self._trades_executed = 0
         self._last_signal_time: Optional[float] = None
         self._last_prediction: Optional[float] = None
+
+    def _auto_load_from_config(self) -> None:
+        """Attempt to load scaler and model from config URIs.
+
+        Fails gracefully: logs warnings but does not raise. If loading
+        fails, the strategy operates in Phase 1 (logging-only) mode.
+        """
+        from strategies.dc_forecast.model_loader import ModelLoader
+
+        # Load scaler if URI provided
+        if self._config.scaler_uri:
+            try:
+                loader = ModelLoader(
+                    model_uri=self._config.model_uri,
+                    scaler_uri=self._config.scaler_uri,
+                )
+                self._scaler_params = loader.load_scaler_params()
+                logger.info(
+                    "[DCForecast] Scaler loaded from %s", self._config.scaler_uri
+                )
+            except Exception as e:
+                logger.warning(
+                    "[DCForecast] Failed to load scaler from %s: %s. "
+                    "Operating in Phase 1 mode.",
+                    self._config.scaler_uri, e,
+                )
+
+        # Load model if URI provided
+        if self._config.model_uri:
+            try:
+                loader = ModelLoader(
+                    model_uri=self._config.model_uri,
+                    scaler_uri=self._config.scaler_uri,
+                )
+                self._model = loader.load_model()
+                if self._model:
+                    logger.info(
+                        "[DCForecast] Model loaded from %s", self._config.model_uri
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[DCForecast] Failed to load model from %s: %s. "
+                    "Operating without inference.",
+                    self._config.model_uri, e,
+                )
 
     @property
     def has_model(self) -> bool:

@@ -399,11 +399,28 @@ class TradingEngine:
             self.executed_trades += 1
 
     async def _close_positions(self, signal: TradingSignal) -> None:
-        """Close positions (e.g., cancel all orders for rebalancing)"""
+        """Close positions based on signal metadata.
 
+        Handles two cases:
+        1. cancel_all: Cancel all open orders (used by grid rebalancing)
+        2. Default: Close the position for the signal's asset (used by DC forecast)
+        """
         if signal.metadata.get("action") == "cancel_all":
             cancelled = await self.exchange.cancel_all_orders()
             self.logger.info(f"🗑️ Cancelled {cancelled} orders for rebalancing")
+        else:
+            # Close the position for this asset
+            close_size = signal.size if signal.size > 0 else None
+            success = await self.exchange.close_position(signal.asset, close_size)
+            if success:
+                self.logger.info(
+                    f"✅ Closed position: {signal.asset} (size={signal.size})"
+                )
+                if self.strategy:
+                    self.strategy.on_trade_executed(signal, 0.0, signal.size)
+                    self.executed_trades += 1
+            else:
+                self.logger.error(f"❌ Failed to close position: {signal.asset}")
 
     async def _trading_loop(self) -> None:
         """Main trading loop for periodic tasks"""
