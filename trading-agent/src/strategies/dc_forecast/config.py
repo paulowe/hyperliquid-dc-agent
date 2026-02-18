@@ -48,6 +48,9 @@ class DCForecastConfig:
     inference_on_every_tick: bool = False
     log_dc_events: bool = True
 
+    # Cooldown: minimum seconds between trading signals
+    cooldown_seconds: float = 30.0
+
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> DCForecastConfig:
         """Create config from a flat dict (e.g., from YAML)."""
@@ -74,4 +77,5 @@ class DCForecastConfig:
             max_position_size_usd=float(d.get("max_position_size_usd", 200.0)),
             inference_on_every_tick=bool(d.get("inference_on_every_tick", False)),
             log_dc_events=bool(d.get("log_dc_events", True)),
+            cooldown_seconds=float(d.get("cooldown_seconds", 30.0)),
         )

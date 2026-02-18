@@ -48,6 +48,9 @@ strategy:
   position_size_usd: 50.0
   max_position_size_usd: 200.0
 
+  # Cooldown between trading signals (seconds)
+  cooldown_seconds: 30
+
   # Modes
   inference_on_every_tick: false
   log_dc_events: true
