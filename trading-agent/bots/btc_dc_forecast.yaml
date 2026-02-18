@@ -1,0 +1,66 @@
+# DC Forecast Strategy - BTC on Hyperliquid Testnet
+# Detects Directional Change (DC) events on live midprice data and
+# generates trading signals using ML forecasts (Phase 2+).
+#
+# Phase 1: Logs DC events only (no trading)
+# Phase 2: Adds model inference on PDCC events
+# Phase 3: Generates BUY/SELL signals
+
+name: "btc_dc_forecast"
+active: true
+
+exchange:
+  type: "hyperliquid"
+  testnet: true
+
+account:
+  max_allocation_pct: 5.0    # Conservative: 5% of account
+
+# Strategy configuration
+strategy:
+  type: "dc_forecast"
+  symbol: "BTC"
+
+  # DC detector thresholds (down, up) pairs
+  # 0.1% threshold is sensitive, fires frequently on BTC
+  dc_thresholds:
+    - [0.001, 0.001]
+
+  # Model configuration (empty = Phase 1 logging only)
+  model_uri: ""
+  scaler_uri: ""
+
+  # Feature set (must match training pipeline output)
+  feature_names:
+    - "PRICE_std"
+    - "PDCC_Down"
+    - "OSV_Down_std"
+    - "PDCC2_UP"
+    - "OSV_Up_std"
+    - "regime_up"
+    - "regime_down"
+
+  # Windowing (must match training input_width)
+  window_size: 50
+
+  # Signal generation (Phase 3)
+  signal_threshold_pct: 0.1
+  position_size_usd: 50.0
+  max_position_size_usd: 200.0
+
+  # Modes
+  inference_on_every_tick: false
+  log_dc_events: true
+
+risk_management:
+  stop_loss_enabled: true
+  stop_loss_pct: 3.0
+  take_profit_enabled: true
+  take_profit_pct: 5.0
+  max_drawdown_pct: 10.0
+  max_position_size_pct: 20.0
+  rebalance:
+    price_move_threshold_pct: 50.0   # Effectively disabled
+
+monitoring:
+  log_level: "INFO"

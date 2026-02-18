@@ -6,14 +6,17 @@ Add new strategies by implementing the TradingStrategy interface.
 
 Available strategies:
 - BasicGridStrategy: Grid trading with geometric spacing and rebalancing
+- DCForecastStrategy: DC detection + ML forecast for directional trading
 """
 
 from .grid import BasicGridStrategy
+from .dc_forecast import DCForecastStrategy
 
 # Strategy registry - makes it easy to add new strategies
 STRATEGY_REGISTRY = {
     "basic_grid": BasicGridStrategy,
     "grid": BasicGridStrategy,  # Alias
+    "dc_forecast": DCForecastStrategy,
 }
 
 
@@ -36,4 +39,4 @@ def create_strategy(strategy_type: str, config: dict):
     return strategy_class(config)
 
 
-__all__ = ["BasicGridStrategy", "STRATEGY_REGISTRY", "create_strategy"]
+__all__ = ["BasicGridStrategy", "DCForecastStrategy", "STRATEGY_REGISTRY", "create_strategy"]
