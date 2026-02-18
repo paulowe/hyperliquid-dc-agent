@@ -1,0 +1,32 @@
+# Experiment 004: Mild Dropout (no bottleneck, no L2)
+# Pipeline: dc-ablation-pipeline
+# Run ID: dc-ablation-pipeline-20260218035421
+# Date: 2026-02-18
+#
+# Hypothesis: Mild dropout (0.2) will help multi-DC by reducing overfitting
+# without hurting baseline/single-DC performance. No bottleneck (proven destructive).
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+  dc_thresholds: [0.001, 0.005, 0.010, 0.015]
+  single_dc_threshold: 0.001
+
+model:
+  architecture: Flatten -> Dense(64, relu) -> Dropout(0.2) -> Dense(32, relu) -> Dropout(0.2) -> Dense(1)
+  bottleneck_dim: 0
+  dropout_rate: 0.2
+  l2_reg: 0.0
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5
+
+caching:
+  enabled: true
+  note: Data steps cache from 003/v2 runs. Only training + compare re-run.

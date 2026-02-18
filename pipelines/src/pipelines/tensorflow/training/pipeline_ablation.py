@@ -106,9 +106,9 @@ def ablation_pipeline(
         distribute_strategy="single",
         early_stopping_epochs=5,
         patience=5,
-        # exp 003: v1 architecture on 3-month data (no bottleneck/dropout/L2)
+        # exp 004: mild dropout only (no bottleneck, no L2)
         bottleneck_dim=0,
-        dropout_rate=0.0,
+        dropout_rate=0.2,
         l2_reg=0.0,
     )
 
