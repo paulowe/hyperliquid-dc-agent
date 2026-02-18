@@ -27,3 +27,9 @@ dev = [
     "isort",
     "mypy",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests that require network access (deselect with '-m \"not slow\"')",
+]
+asyncio_mode = "auto"
