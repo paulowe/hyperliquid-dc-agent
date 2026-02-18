@@ -1,0 +1,31 @@
+# Experiment 006: Matched Compression Ratio for Multi-DC
+# Pipeline: dc-ablation-pipeline
+# Date: 2026-02-18
+#
+# Hypothesis: If single-DC succeeds at 72% compression (450->128 in exp 005),
+# then multi-DC should succeed at the same 72% compression (1350->384).
+# If multi-DC still fails, the extra DC thresholds add noise, not signal.
+#
+# Compression ratios at bottleneck=384:
+#   Baseline:  50*3  = 150 -> 384 (expansion, 0% loss)
+#   Single-DC: 50*9  = 450 -> 384 (mild, 15% loss)
+#   Multi-DC:  50*27 = 1350 -> 384 (moderate, 72% loss - matching single-DC in exp 005)
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+
+model:
+  architecture: Flatten -> Dense(384, relu) [bottleneck] -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
+  bottleneck_dim: 384
+  dropout_rate: 0.0
+  l2_reg: 0.0
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5

@@ -1,0 +1,32 @@
+# Experiment 005: Larger Bottleneck (128 dims) for Fair Capacity Comparison
+# Pipeline: dc-ablation-pipeline
+# Run ID: dc-ablation-pipeline-20260218050234
+# Date: 2026-02-18
+#
+# Hypothesis: A 128-dim bottleneck preserves most temporal info for baseline
+# (150->128 = 15% compression) while significantly constraining multi-DC
+# (1350->128 = 90% compression). If multi-DC still fails, DC features are noise.
+#
+# Flattened dims:
+#   Baseline:  50*3  = 150 -> 128 (mild, 15% loss)
+#   Single-DC: 50*9  = 450 -> 128 (moderate, 72% loss)
+#   Multi-DC:  50*27 = 1350 -> 128 (aggressive, 90% loss)
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+
+model:
+  architecture: Flatten -> Dense(128, relu) [bottleneck] -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
+  bottleneck_dim: 128
+  dropout_rate: 0.0
+  l2_reg: 0.0
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5
