@@ -23,7 +23,6 @@ from pipelines import generate_query
 from bigquery_components import (
     bq_query_to_table,
     extract_bq_to_dataset,
-    load_dataset_to_bigquery,
 )
 from vertex_components import (
     directional_change_detector,
@@ -107,10 +106,10 @@ def ablation_pipeline(
         distribute_strategy="single",
         early_stopping_epochs=5,
         patience=5,
-        # v2: equal capacity + regularization
-        bottleneck_dim=32,   # project all arms to same dim after Flatten
-        dropout_rate=0.3,    # dropout after each hidden layer
-        l2_reg=1e-4,         # L2 weight decay on hidden layers
+        # exp 003: v1 architecture on 3-month data (no bottleneck/dropout/L2)
+        bottleneck_dim=0,
+        dropout_rate=0.0,
+        l2_reg=0.0,
     )
 
     train_container_uri = (
@@ -345,20 +344,10 @@ def ablation_pipeline(
 
     # ---------------------------------------------------------------
     # Step 7: Load comparison report to BigQuery
+    # NOTE: Disabled — the compare_forecasts report is nested JSON (not tabular),
+    # and the load_dataset_to_bigquery component hardcodes /*.csv URI patterns.
+    # Results are available in GCS at the compare-forecasts task output path.
     # ---------------------------------------------------------------
-    load_dataset_to_bigquery(
-        dataset=comparison.outputs["report"],
-        destination_table_id=f"{project_id}.{dataset_id}.ablation_comparison",
-        destination_project_id=project_id,
-        destination_dataset_id=dataset_id,
-        destination_table_name="ablation_comparison",
-        bq_client_project_id=project_id,
-        location=dataset_location,
-        write_disposition="WRITE_TRUNCATE",
-        create_disposition="CREATE_IF_NEEDED",
-        source_format="NEWLINE_DELIMITED_JSON",
-        autodetect=True,
-    ).after(comparison).set_display_name("Load Report to BQ")
 
 
 if __name__ == "__main__":

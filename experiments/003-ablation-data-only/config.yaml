@@ -1,0 +1,35 @@
+# Experiment 003: Data Volume Only (no architecture changes)
+# Pipeline: dc-ablation-pipeline
+# Run ID: dc-ablation-pipeline-20260218023921
+# Date: 2026-02-18
+#
+# Hypothesis: v2's catastrophic failure was caused by the bottleneck + regularization,
+# NOT by the increased data volume. This experiment uses the SAME 3-month data as v2
+# but the SAME architecture as v1 (no bottleneck, no dropout, no L2).
+# If baseline recovers to R²>0, bottleneck was the problem.
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+  dc_thresholds: [0.001, 0.005, 0.010, 0.015]
+  single_dc_threshold: 0.001
+  actual_ticks_in_range: 4112645
+
+model:
+  architecture: Flatten -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
+  bottleneck_dim: 0
+  dropout_rate: 0.0
+  l2_reg: 0.0
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5
+
+caching:
+  enabled: true
+  note: Data processing steps (extract, DC detect, feature eng, split, window, concat) should cache from v2 run since inputs are identical. Only training + comparison re-run.
