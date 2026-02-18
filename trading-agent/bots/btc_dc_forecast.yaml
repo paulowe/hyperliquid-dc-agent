@@ -12,6 +12,8 @@ active: true
 exchange:
   type: "hyperliquid"
   testnet: true
+  leverage: 3          # Cross-margin leverage for perp positions
+  leverage_mode: "cross"  # "cross" or "isolated"
 
 account:
   max_allocation_pct: 5.0    # Conservative: 5% of account

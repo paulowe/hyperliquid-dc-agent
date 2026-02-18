@@ -76,6 +76,9 @@ def _build_adapter(mids=None, positions=None):
     adapter.info = MockInfo(mids=mids, user_state=user_state)
     adapter.exchange = MockExchangeSDK()
 
+    # Build precision cache from mock meta()
+    adapter._build_precision_cache()
+
     return adapter
 
 
@@ -141,20 +144,21 @@ class TestPlaceOrder:
 
     @pytest.mark.asyncio
     async def test_minimum_size_enforced(self):
-        """Size should be at least 0.0001."""
+        """Size should be at least 1 unit at the asset's szDecimals (10^-5 for BTC)."""
         adapter = _build_adapter()
         order = Order(
             id="test_4",
             asset="BTC",
             side=OrderSide.BUY,
-            size=0.00001,  # Below minimum
+            size=0.000001,  # Below BTC min (szDecimals=5 → 0.00001)
             order_type=OrderType.MARKET,
             price=None,
         )
         await adapter.place_order(order)
 
         call = adapter.exchange.order_calls[0]
-        assert call["sz"] >= 0.0001
+        # BTC szDecimals=5 → min size = 10^-5 = 0.00001
+        assert call["sz"] >= 0.00001
 
 
 class TestClosePosition:
