@@ -407,11 +407,17 @@ class HyperliquidAdapter(ExchangeAdapter):
             return []
 
     async def close_position(self, asset: str, size: Optional[float] = None) -> bool:
-        """Close a position by placing a market order"""
+        """Close a position by placing a reduce-only market order.
+
+        Uses the same SDK call pattern as place_order: keyword args with
+        HLOrderType and a ±1% slippage limit price for IOC fill.
+        """
         if not self.is_connected:
             return False
 
         try:
+            from hyperliquid.utils.signing import OrderType as HLOrderType
+
             # Get current positions to determine position details
             positions = await self.get_positions()
             target_position = None
@@ -431,22 +437,32 @@ class HyperliquidAdapter(ExchangeAdapter):
             else:
                 close_size = min(size, abs(target_position.size))
 
-            # Determine side (opposite of current position)
-            close_side = (
-                "A" if target_position.size > 0 else "B"
-            )  # A=Ask (sell), B=Bid (buy)
+            # Closing = opposite side of current position
+            is_buy = target_position.size < 0  # Short → buy to close
 
-            # Place market order to close position
-            order_request = {
-                "coin": asset,
-                "is_buy": close_side == "B",
-                "sz": close_size,
-                "limit_px": None,  # Market order
-                "order_type": {"limit": {"tif": "Ioc"}},  # Immediate or Cancel
-                "reduce_only": True,
-            }
+            # Get market price for slippage-adjusted limit
+            market_price = await self.get_market_price(asset)
+            # ±1% slippage for market-like fill
+            if is_buy:
+                limit_price = market_price * 1.01
+            else:
+                limit_price = market_price * 0.99
 
-            result = self.exchange.order(order_request)
+            # Round price and size
+            if asset == "BTC":
+                limit_price = float(int(limit_price))
+            else:
+                limit_price = round(float(limit_price), 2)
+            close_size = round(float(close_size), 5)
+
+            result = self.exchange.order(
+                name=asset,
+                is_buy=is_buy,
+                sz=close_size,
+                limit_px=limit_price,
+                order_type=HLOrderType({"limit": {"tif": "Ioc"}}),
+                reduce_only=True,
+            )
 
             if result and result.get("status") == "ok":
                 print(f"✅ Position close order placed: {close_size} {asset}")
