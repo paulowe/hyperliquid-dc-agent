@@ -1,0 +1,78 @@
+# Experiment 002: DC Feature Ablation v2 (Equal Capacity + Regularization + More Data)
+# Pipeline: dc-ablation-pipeline
+# Run ID: dc-ablation-pipeline-20260216211827
+# Previous run (cancelled): dc-ablation-pipeline-20260216210044
+#   Cancelled because KFP caching reused stale v1 data artifacts despite new date range.
+#   Resubmitted with enable_caching=False.
+# Date: 2026-02-16
+
+pipeline: pipeline_ablation.py
+
+# Changes from 001:
+# - Extended data from 7 days to 3 months
+# - Added bottleneck projection layer (32 dims) for equal capacity
+# - Added dropout (0.3) and L2 regularization (1e-4)
+# - Increased epochs from 5 to 20 (with early stopping patience=5)
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+  dc_thresholds: [0.001, 0.005, 0.010, 0.015]
+  single_dc_threshold: 0.001
+  # Actual data availability (verified via BQ spot check):
+  #   Data starts: 2025-05-22 23:39:20 (no data before May 22)
+  #   Data ends:   2025-10-02 20:36:35
+  #   Ticks in range (May 1 - Aug 1): ~4,112,645
+  #   Effective coverage: May 22 - Jul 31 (~2.3 months)
+  #   Compared to v1: ~10x more data (422K ticks in 7 days)
+  actual_effective_start: "2025-05-22 23:39:20"
+  actual_ticks_in_range: 4112645
+  monthly_breakdown:
+    "2025-05": 221439   # partial (starts May 22)
+    "2025-06": 2001784  # full month
+    "2025-07": 1889422  # full month
+
+features:
+  common: [PRICE_std, vol_quote_std, cvd_quote_std]
+  dc_per_threshold: [PDCC_Down, OSV_Down_std, OSV_Up_std, PDCC2_UP, regime_up, regime_down]
+  label: [PRICE_std]
+
+windowing:
+  input_width: 50
+  label_width: 1
+  shift: 50
+  batch_size: 32
+
+model:
+  architecture: Flatten -> Dense(32, relu) [bottleneck] -> Dropout(0.3) -> Dense(64, relu, l2=1e-4) -> Dropout(0.3) -> Dense(32, relu, l2=1e-4) -> Dense(1)
+  bottleneck_dim: 32
+  dropout_rate: 0.3
+  l2_reg: 0.0001
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  loss_fn: MeanSquaredError
+  optimizer: Adam
+  learning_rate: 0.01
+  patience: 5
+  distribute_strategy: single
+
+containers:
+  train: us-docker.pkg.dev/vertex-ai/training/tf-cpu.2-17.py310:latest
+  serving: us-docker.pkg.dev/vertex-ai/prediction/tf2-cpu.2-15:latest
+
+arms:
+  baseline:
+    features: 3 (common only)
+    input_shape: [50, 3]
+    note: After bottleneck, same effective capacity as other arms
+  single_dc:
+    features: 9 (common + DC from threshold=0.001)
+    input_shape: [50, 9]
+    note: After bottleneck, same effective capacity as other arms
+  multi_dc:
+    features: 27 (common + DC from all 4 thresholds)
+    input_shape: [50, 27]
+    note: After bottleneck, same effective capacity as other arms

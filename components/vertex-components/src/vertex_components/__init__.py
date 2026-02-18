@@ -18,6 +18,7 @@ from .concat_latent_vectors import concat_latent_vectors
 from .pick_scaler import pick_reference_scaler
 from .window_dataset import window_dataset
 from .concat_threshold_features import concat_threshold_features
+from .compare_forecasts import compare_forecasts
 
 __version__ = "0.0.1"
 __all__ = [
@@ -39,6 +40,7 @@ __all__ = [
     "concat_threshold_features",
     "pick_reference_scaler",
     "window_dataset",
+    "compare_forecasts",
 
     # "cross_threshold_latent_forecast_train_job",
 ]

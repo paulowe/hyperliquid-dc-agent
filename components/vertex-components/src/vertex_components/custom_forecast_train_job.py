@@ -19,12 +19,9 @@ from kfp.v2.dsl import Input, component, Metrics, Output, Artifact, Dataset
 @component(
     base_image="python:3.10",
     packages_to_install=[
-        # Upgrade pip/setuptools so we get the latest PEP 517 hooks
-        "--upgrade",
-        "pip",
-        "setuptools",
+        "setuptools>=69.0.0",
         "wheel",
-        # Force Cython < 3 so build‐time hooks don’t look for the removed API
+        # Force Cython < 3 so build‐time hooks don't look for the removed API
         "cython<3.0.0",
         # Install PyYAML without isolation so it sees our Cython
         "--no-build-isolation",
@@ -49,6 +46,7 @@ def custom_forecast_train_job(
     serving_container_uri: str,
     model: Output[Artifact],
     metrics: Output[Metrics],
+    predictions: Output[Dataset],
     staging_bucket: str,
     parent_model: str = None,
     model_display_name: Optional[str] = None,
@@ -155,6 +153,7 @@ def custom_forecast_train_job(
         f"--test_data={test_data.path}",
         f"--metrics={metrics.path}",
         f"--hparams={hp_json}",
+        f"--predictions={predictions.path}",
     ]
     # https://cloud.google.com/python/docs/reference/aiplatform/1.18.3/google.cloud.aiplatform.CustomTrainingJob#google_cloud_aiplatform_CustomTrainingJob_run
     uploaded_model = job.run(

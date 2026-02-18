@@ -51,6 +51,9 @@ DEFAULT_HPARAMS = dict(
     n_features=8,
     kl_init_weight=1e-4,
     patience=5, # early stopping patience
+    bottleneck_dim=0,  # 0 = no bottleneck (backward compat); >0 = project flattened input to this dim
+    dropout_rate=0.0,  # 0.0 = no dropout; >0 = dropout after each hidden Dense layer
+    l2_reg=0.0,        # 0.0 = no L2; >0 = kernel_regularizer=l2(l2_reg) on hidden Dense layers
     metrics=[
         "RootMeanSquaredError",
         "MeanAbsoluteError",
@@ -555,27 +558,55 @@ def dataset_with_fast_options(ds: tf.data.Dataset) -> tf.data.Dataset:
 # -----------------------------------------------------------------------------
 # Build multi-step dense model
 # -----------------------------------------------------------------------------
-def build_multi_step_dense(n_outputs: int, label_width: int, n_labels: int) -> keras.Model:
+def build_multi_step_dense(n_outputs: int, label_width: int, n_labels: int, hparams: dict = None) -> keras.Model:
     """
-    Simple dense forecaster;
+    Dense forecaster with optional bottleneck projection, dropout, and L2 regularization.
+
+    When bottleneck_dim > 0, a projection layer is inserted after Flatten to map all
+    input dimensionalities to the same size. This equalizes effective model capacity
+    regardless of the number of input features.
 
     Args:
         label_width: Number of steps to predict
         n_labels: Number of labels to predict
         n_outputs: Number of outputs to predict
+        hparams: Hyperparameters dict; reads bottleneck_dim, dropout_rate, l2_reg
 
     Returns:
         keras.Model: The compiled model
     """
-    return keras.Sequential(
-        [
-            # Shape: (time, features) => (time*features)
-            keras.layers.Flatten(), # (time, features) -> (time*features)
-            keras.layers.Dense(64, activation="relu"),
-            keras.layers.Dense(32, activation="relu"),
-            keras.layers.Dense(label_width),
-        ]
-    )
+    hparams = hparams or {}
+    bottleneck_dim = int(hparams.get("bottleneck_dim", 0))
+    dropout_rate = float(hparams.get("dropout_rate", 0.0))
+    l2_reg = float(hparams.get("l2_reg", 0.0))
+
+    # Build regularizer if requested
+    regularizer = keras.regularizers.l2(l2_reg) if l2_reg > 0 else None
+
+    model_layers = [
+        # Shape: (time, features) => (time*features)
+        keras.layers.Flatten(),
+    ]
+
+    # Optional bottleneck: project flattened input to a fixed dimensionality
+    if bottleneck_dim > 0:
+        model_layers.append(keras.layers.Dense(bottleneck_dim, activation="relu", name="bottleneck"))
+        if dropout_rate > 0:
+            model_layers.append(keras.layers.Dropout(dropout_rate))
+
+    # Hidden layers with optional L2 and dropout
+    model_layers.append(keras.layers.Dense(64, activation="relu", kernel_regularizer=regularizer))
+    if dropout_rate > 0:
+        model_layers.append(keras.layers.Dropout(dropout_rate))
+
+    model_layers.append(keras.layers.Dense(32, activation="relu", kernel_regularizer=regularizer))
+    if dropout_rate > 0:
+        model_layers.append(keras.layers.Dropout(dropout_rate))
+
+    # Output layer (no regularization, no dropout)
+    model_layers.append(keras.layers.Dense(label_width))
+
+    return keras.Sequential(model_layers)
 
 
 def main():
@@ -588,6 +619,10 @@ def main():
     )
     parser.add_argument("--metrics", type=str, required=True)
     parser.add_argument("--hparams", default={}, type=json.loads)
+    parser.add_argument(
+        "--predictions", type=str, default="",
+        help="Optional path to write predictions CSV (sample_index, y_true_scaled, y_pred_scaled)",
+    )
     args = parser.parse_args()
 
     # ============================================================
@@ -804,7 +839,7 @@ def main():
     # ============================================================
     strategy = get_distribution_strategy(hparams["distribute_strategy"])
     with strategy.scope():
-        model = build_multi_step_dense(n_outputs=n_outputs, label_width=label_width, n_labels=n_labels)
+        model = build_multi_step_dense(n_outputs=n_outputs, label_width=label_width, n_labels=n_labels, hparams=hparams)
         # AdamW is a good default; if mixed precision is enabled, Keras handles loss scaling
         optimizer = keras.optimizers.AdamW(learning_rate=hparams["learning_rate"])
 
@@ -915,6 +950,38 @@ def main():
     # Log which metrics were found
     logging.info(f"Extracted metrics: {pretty_metrics}")
 
+    # ============================================================
+    # Generate predictions on test set and save to CSV (optional)
+    # ============================================================
+    if args.predictions:
+        logging.info("Generating predictions on test set...")
+        y_true_list = []
+        y_pred_list = []
+        for x_batch, y_batch in test_ds:
+            preds = model.predict(x_batch, verbose=0)
+            y_true_list.append(y_batch.numpy().reshape(-1))
+            y_pred_list.append(preds.reshape(-1))
+        y_true_all = np.concatenate(y_true_list)
+        y_pred_all = np.concatenate(y_pred_list)
+
+        pred_df = pd.DataFrame({
+            "sample_index": np.arange(len(y_true_all)),
+            "y_true_scaled": y_true_all,
+            "y_pred_scaled": y_pred_all,
+        })
+        predictions_path = args.predictions
+        os.makedirs(os.path.dirname(predictions_path) or ".", exist_ok=True)
+        pred_df.to_csv(predictions_path, index=False)
+        logging.info(f"Predictions saved to {predictions_path} ({len(pred_df)} samples)")
+
+        # Add metadata to metrics JSON
+        pretty_metrics["total_params"] = int(model.count_params())
+        pretty_metrics["n_features"] = int(n_features)
+        pretty_metrics["input_width"] = int(input_width)
+        pretty_metrics["model_label"] = hparams.get("model_label", "unknown")
+        with open(args.metrics, "w") as fp:
+            json.dump(pretty_metrics, fp)
+        logging.info(f"Updated metrics with prediction metadata: {args.metrics}")
 
     # ============================================================
     # Save training dataset info for model monitoring

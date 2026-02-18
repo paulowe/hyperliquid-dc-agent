@@ -74,7 +74,7 @@ make deploy-infra env=dev                       # Terraform apply
 ## Trading Agent Details
 
 ### Code Style
-- **NO COMMENTS** in code unless explicitly requested
+- **ALWAYS ADD COMMENTS** in code unless explicitly requested not to
 - Follow existing patterns in the codebase
 - Use type hints consistently
 - Keep functions focused and single-purpose
@@ -129,6 +129,52 @@ HYPERLIQUID_TESTNET=true
 Set in `env.sh` (see `env.sh.example`):
 - `VERTEX_PROJECT_ID`, `VERTEX_LOCATION`, `VERTEX_SA_EMAIL`
 - `PIPELINE_TEMPLATE`, `PIPELINE_FILES_GCS_PATH`, `VERTEX_PIPELINE_ROOT`
+
+## GCP Debugging Skills
+
+Patterns for debugging Vertex AI pipelines:
+```bash
+# Check pipeline run status
+gcloud ai custom-jobs list --region=us-central1 --project=derivatives-417104
+
+# Get pipeline task states via Python SDK
+# aiplatform.PipelineJob.get(resource_name).task_details
+
+# Read pipeline logs
+gcloud logging read 'resource.type="aiplatform.googleapis.com/PipelineJob"' --project=derivatives-417104 --limit=50
+
+# Fetch task output from GCS
+gsutil cat "gs://derivatives-417104-pl-root/<run-id>/<task-id>/report"
+
+# Check BQ dataset location
+bq show --format=json derivatives-417104:coindesk | jq .location
+
+# Compile pipeline (env vars must be set first)
+source env.sh && cd pipelines && uv run python -m pipelines.tensorflow.training.pipeline_ablation
+
+# Sync training script to GCS
+gsutil cp pipelines/src/pipelines/tensorflow/training/assets/tftrain_tf_fast_model.py gs://derivatives-417104-pl-assets/training/assets/
+
+# Submit pipeline via trigger
+uv run --package dc-vae python -m pipelines.trigger.main
+```
+
+## Experiment Tracking
+
+All experiments live in `experiments/NNN-<descriptive-name>/`. Each has:
+- `config.yaml`: frozen snapshot of pipeline params (dates, hparams, thresholds)
+- `results.json`: raw output from compare_forecasts (copied from GCS after run)
+- `notes.md`: human-readable analysis, what we learned, link to next experiment
+
+Always record what changed from the previous experiment and why.
+
+## Known Pitfalls
+
+- KFP `packages_to_install`: each item is a separate `pip install` — use `"setuptools>=69.0.0"` not `"--upgrade", "pip", "setuptools"`
+- `os.environ.get()` in pipeline defaults evaluates at compile time — always `source env.sh` before compiling
+- BQ dataset location must match actual dataset location (check with `bq show`)
+- `compare_forecasts` outputs JSON, not CSV — use `source_format="NEWLINE_DELIMITED_JSON"` in `load_dataset_to_bigquery`
+- KFP caching keys on component signature + inputs, NOT on underlying data contents. If you change date ranges but write to the same BQ table name, downstream steps will serve stale cache from a previous run. Use `enable_caching=False` when changing data ranges or rewriting intermediate tables.
 
 ## Important Notes
 
