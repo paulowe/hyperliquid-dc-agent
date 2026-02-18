@@ -1,0 +1,45 @@
+{
+  "per_model": {
+    "baseline": {
+      "rmse": 0.3648177687386111,
+      "mae": 0.28362462809501193,
+      "mape": 0.09881980833601672,
+      "r_squared": 0.530898122481475,
+      "smape": 0.10079064080354663,
+      "directional_accuracy": 0.48789757476424617
+    },
+    "single_dc": {
+      "rmse": 0.654279677677089,
+      "mae": 0.6096012455216152,
+      "mape": 0.2068648331008348,
+      "r_squared": -0.5088361044752268,
+      "smape": 0.23075144195607458,
+      "directional_accuracy": 0.499156749566498
+    },
+    "multi_dc": {
+      "rmse": 1.6806956295637148,
+      "mae": 1.361322359818242,
+      "mape": 0.4635784482469635,
+      "r_squared": -8.956193921772096,
+      "smape": 0.7635739475579207,
+      "directional_accuracy": 0.3956388512791278
+    }
+  },
+  "comparisons": {
+    "single_dc_vs_baseline": {
+      "rmse_relative_improvement_pct": -79.34424629022799,
+      "wilcoxon_p": 0.0,
+      "paired_ttest_p": 0.0
+    },
+    "multi_dc_vs_baseline": {
+      "rmse_relative_improvement_pct": -360.6945641312551,
+      "wilcoxon_p": 0.0,
+      "paired_ttest_p": 0.0
+    },
+    "multi_dc_vs_single_dc": {
+      "rmse_relative_improvement_pct": -156.87724789660967,
+      "wilcoxon_p": 0.0,
+      "paired_ttest_p": 0.0
+    }
+  }
+}

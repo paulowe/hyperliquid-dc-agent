@@ -1,6 +1,6 @@
 # Experiment 007: Tighter Bottleneck (64) for Stronger Info Bottleneck
 # Pipeline: dc-ablation-pipeline
-# Run ID: dc-ablation-pipeline-20260218074445
+# Run ID: dc-ablation-pipeline-20260218082725 (resubmit, caching=False)
 # Date: 2026-02-18
 #
 # Hypothesis: Tighter bottleneck (64 vs 128) forces stronger feature selection.
