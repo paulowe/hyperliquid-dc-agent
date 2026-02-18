@@ -1,0 +1,36 @@
+# Experiment 008: Bottleneck Midpoint (96)
+# Pipeline: dc-ablation-pipeline
+# Run ID: dc-ablation-pipeline-20260218133338
+# Date: 2026-02-18
+#
+# Tests midpoint between 64 (too tight, exp 007) and 128 (optimal, exp 005)
+# to refine the optimal bottleneck dimension.
+#
+# Compression ratios at bottleneck=96:
+#   Baseline:  50*3  = 150 -> 96 (36% compression)
+#   Single-DC: 50*9  = 450 -> 96 (79% compression)
+#   Multi-DC:  50*27 = 1350 -> 96 (93% compression)
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+
+model:
+  architecture: Flatten -> Dense(96, relu) [bottleneck] -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
+  bottleneck_dim: 96
+  dropout_rate: 0.0
+  l2_reg: 0.0
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5
+
+# Also corrected misleading config values in pipeline:
+# - loss_fn: MeanAbsoluteError (was incorrectly listed as MeanSquaredError)
+# - optimizer: AdamW (was incorrectly listed as Adam)
+# - removed unused early_stopping_epochs param

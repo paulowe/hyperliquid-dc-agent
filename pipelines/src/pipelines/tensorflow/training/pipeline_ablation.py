@@ -96,18 +96,21 @@ def ablation_pipeline(
     hparams = dict(
         batch_size=100,
         epochs=20,
-        loss_fn="MeanSquaredError",
-        optimizer="Adam",
+        # NOTE: loss_fn and hidden_units are NOT read by the training script.
+        # Actual loss = MeanAbsoluteError (hardcoded in tftrain_tf_fast_model.py:861)
+        # Actual hidden = Dense(64) -> Dense(32) (hardcoded in build_multi_step_dense)
+        # Actual optimizer = AdamW (not Adam)
+        loss_fn="MeanAbsoluteError",
+        optimizer="AdamW",
         learning_rate=0.01,
         hidden_units=[
             {"units": 64, "activation": "relu"},
             {"units": 32, "activation": "relu"},
         ],
         distribute_strategy="single",
-        early_stopping_epochs=5,
         patience=5,
-        # exp 007: tighter bottleneck (64) for stronger info bottleneck
-        bottleneck_dim=64,
+        # exp 008: bottleneck=96, midpoint between 64 (too tight) and 128 (optimal)
+        bottleneck_dim=96,
         dropout_rate=0.0,
         l2_reg=0.0,
     )
