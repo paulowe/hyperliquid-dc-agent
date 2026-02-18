@@ -106,8 +106,8 @@ def ablation_pipeline(
         distribute_strategy="single",
         early_stopping_epochs=5,
         patience=5,
-        # exp 006: matched compression ratio (384) for multi-DC fairness
-        bottleneck_dim=384,
+        # exp 007: tighter bottleneck (64) for stronger info bottleneck
+        bottleneck_dim=64,
         dropout_rate=0.0,
         l2_reg=0.0,
     )

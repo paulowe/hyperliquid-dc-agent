@@ -1,0 +1,32 @@
+# Experiment 007: Tighter Bottleneck (64) for Stronger Info Bottleneck
+# Pipeline: dc-ablation-pipeline
+# Run ID: dc-ablation-pipeline-20260218074445
+# Date: 2026-02-18
+#
+# Hypothesis: Tighter bottleneck (64 vs 128) forces stronger feature selection.
+# If single-DC still beats baseline, the DC signal survives heavy compression.
+# If single-DC degrades, 128 was the sweet spot.
+#
+# Compression ratios at bottleneck=64:
+#   Baseline:  50*3  = 150 -> 64 (57% compression)
+#   Single-DC: 50*9  = 450 -> 64 (86% compression)
+#   Multi-DC:  50*27 = 1350 -> 64 (95% compression)
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+
+model:
+  architecture: Flatten -> Dense(64, relu) [bottleneck] -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
+  bottleneck_dim: 64
+  dropout_rate: 0.0
+  l2_reg: 0.0
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5

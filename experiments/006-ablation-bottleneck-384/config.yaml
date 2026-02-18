@@ -1,5 +1,6 @@
 # Experiment 006: Matched Compression Ratio for Multi-DC
 # Pipeline: dc-ablation-pipeline
+# Run ID: dc-ablation-pipeline-20260218064628
 # Date: 2026-02-18
 #
 # Hypothesis: If single-DC succeeds at 72% compression (450->128 in exp 005),
