@@ -1,6 +1,6 @@
 # Experiment 008: Bottleneck Midpoint (96)
 # Pipeline: dc-ablation-pipeline
-# Run ID: dc-ablation-pipeline-20260218133338
+# Run ID: dc-ablation-pipeline-20260218133952 (resubmit, caching=False)
 # Date: 2026-02-18
 #
 # Tests midpoint between 64 (too tight, exp 007) and 128 (optimal, exp 005)

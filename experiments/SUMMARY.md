@@ -17,14 +17,16 @@ Do Directional Change (DC) features improve BTC-USD price forecasting accuracy?
 | 005 | 3 months (4.1M) | 128 | 0 | 0 | 20 | 0.871 | **0.874** | -20.07 | **Single-DC beats baseline!** |
 | 006 | 3 months (4.1M) | 384 | 0 | 0 | 20 | 0.728 | **0.786** | -162.9 | Bigger DC margin but both degrade |
 | 007 | 3 months (4.1M) | 64 | 0 | 0 | 20 | **0.531** | -0.509 | -8.956 | Too tight — destroys all arms |
+| 008 | 3 months (4.1M) | 96 | 0 | 0 | 20 | **0.235** | 0.097 | -8.673 | Non-monotonic valley at 96 |
 
-## Bottleneck Sweep (Complete)
+## Bottleneck Sweep (Complete — 6 values tested)
 
 | Bottleneck | Baseline R² | Single-DC R² | Delta (DC-BL) | Best Overall |
 |:----------:|:-----------:|:------------:|:-------------:|:------------:|
 | 0 (exp 003) | 0.845 | 0.665 | -0.180 | Baseline |
 | 32 (exp 002) | -57.3 | -81.7 | -24.4 | Both dead |
 | 64 (exp 007) | 0.531 | -0.509 | -1.040 | Baseline (degraded) |
+| 96 (exp 008) | 0.235 | 0.097 | -0.138 | Baseline (degraded) |
 | **128 (exp 005)** | **0.871** | **0.874** | **+0.003** | **Single-DC (optimal)** |
 | 384 (exp 006) | 0.728 | 0.786 | +0.058 | Single-DC (degraded) |
 

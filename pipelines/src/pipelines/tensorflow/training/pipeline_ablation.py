@@ -356,6 +356,6 @@ def ablation_pipeline(
 if __name__ == "__main__":
     compiler.Compiler().compile(
         pipeline_func=ablation_pipeline,
-        package_path="ablation.json",
+        package_path=str(pathlib.Path(__file__).parent.parent.parent.parent / "ablation.json"),
         type_check=False,
     )
