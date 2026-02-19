@@ -957,17 +957,23 @@ def main():
         logging.info("Generating predictions on test set...")
         y_true_list = []
         y_pred_list = []
+        ref_price_list = []
         for x_batch, y_batch in test_ds:
             preds = model.predict(x_batch, verbose=0)
             y_true_list.append(y_batch.numpy().reshape(-1))
             y_pred_list.append(preds.reshape(-1))
+            # Extract last input PRICE_std as reference for directional accuracy.
+            # PRICE_std is always feature index 0 (first in feature_names list).
+            ref_price_list.append(x_batch[:, -1, 0].numpy().reshape(-1))
         y_true_all = np.concatenate(y_true_list)
         y_pred_all = np.concatenate(y_pred_list)
+        ref_price_all = np.concatenate(ref_price_list)
 
         pred_df = pd.DataFrame({
             "sample_index": np.arange(len(y_true_all)),
             "y_true_scaled": y_true_all,
             "y_pred_scaled": y_pred_all,
+            "reference_price": ref_price_all,
         })
         predictions_path = args.predictions
         os.makedirs(os.path.dirname(predictions_path) or ".", exist_ok=True)

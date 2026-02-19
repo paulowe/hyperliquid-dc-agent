@@ -39,6 +39,13 @@ Do Directional Change (DC) features improve BTC-USD price forecasting accuracy?
 5. **More data dramatically helps**: R² 0.545 (7 days) → 0.845 (3 months)
 6. **Dropout doesn't work for small dense networks**: Even 0.2 destroys performance
 7. **KFP caching pitfall**: Stale `load-dataset-to-bigquery` task from cached pipeline definitions causes pipeline-level FAILED status even when compare-forecasts succeeds
+8. **Directional accuracy is uninformative**: All arms score ~47.7% (random). The metric uses `np.sign(np.diff(y_true))` on consecutive windowed samples (stride=1), which measures tick-by-tick direction — too noisy to capture. High R² on PRICE_std means the model tracks price *level* well, not price *direction*. For trading utility, we need either: (a) a different target variable (returns), or (b) a metric that compares predicted vs actual price relative to current price
+
+## Open Questions (Phase 2: Prediction Horizon)
+
+1. **Does prediction horizon (shift) affect R² or DC feature value?** Testing shift=10 in exp 009
+2. **What shift value is most useful for trading?** Shorter horizons are more actionable but may have less signal
+3. **Do DC regime features interact with prediction timescale?** Regime changes happen at specific timescales
 
 ## Architecture
 ```

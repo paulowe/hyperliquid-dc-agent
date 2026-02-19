@@ -25,6 +25,8 @@ def compare_forecasts(
 
     Each input Dataset should be a CSV file with columns:
         sample_index, y_true_scaled, y_pred_scaled
+        Optional: reference_price (last PRICE_std from input window, for
+        meaningful directional accuracy vs current price)
 
     Outputs:
         report: JSON file with per-model metrics and pairwise comparisons
@@ -69,21 +71,39 @@ def compare_forecasts(
             return 0.0
         return float(1.0 - ss_res / ss_tot)
 
-    def compute_directional_accuracy(y_true, y_pred):
+    def compute_directional_accuracy(y_true, y_pred, reference=None):
+        """Compute directional accuracy.
+
+        If reference prices are provided, measures whether the model correctly
+        predicts UP/DOWN relative to the current price (useful for trading).
+        Otherwise falls back to tick-by-tick direction of consecutive predictions.
+        """
+        if reference is not None:
+            # Meaningful metric: does model predict price direction from current price?
+            true_dir = np.sign(y_true - reference)
+            pred_dir = np.sign(y_pred - reference)
+            # Exclude samples where true direction is exactly 0 (no change)
+            mask = true_dir != 0
+            if not mask.any():
+                return 0.5
+            return float(np.mean(true_dir[mask] == pred_dir[mask]))
+        # Fallback: tick-by-tick direction of consecutive predictions
         if len(y_true) < 2:
             return 0.0
         true_dir = np.sign(np.diff(y_true))
         pred_dir = np.sign(np.diff(y_pred))
         return float(np.mean(true_dir == pred_dir))
 
-    def compute_all_metrics(y_true, y_pred):
+    def compute_all_metrics(y_true, y_pred, reference=None):
         return {
             "rmse": compute_rmse(y_true, y_pred),
             "mae": compute_mae(y_true, y_pred),
             "mape": compute_mape(y_true, y_pred),
             "r_squared": compute_r_squared(y_true, y_pred),
             "smape": compute_smape(y_true, y_pred),
-            "directional_accuracy": compute_directional_accuracy(y_true, y_pred),
+            "directional_accuracy": compute_directional_accuracy(
+                y_true, y_pred, reference=reference
+            ),
         }
 
     def compare_two(y_true, y_pred_a, y_pred_b):
@@ -134,13 +154,18 @@ def compare_forecasts(
     yt_m = df_multi["y_true_scaled"].to_numpy()
     yp_m = df_multi["y_pred_scaled"].to_numpy()
 
+    # Extract reference prices if available (for meaningful directional accuracy)
+    ref_b = df_base["reference_price"].to_numpy() if "reference_price" in df_base.columns else None
+    ref_s = df_single["reference_price"].to_numpy() if "reference_price" in df_single.columns else None
+    ref_m = df_multi["reference_price"].to_numpy() if "reference_price" in df_multi.columns else None
+
     # -----------------------------------------------------------------
     # Per-model metrics
     # -----------------------------------------------------------------
     per_model = {
-        "baseline": compute_all_metrics(yt_b, yp_b),
-        "single_dc": compute_all_metrics(yt_s, yp_s),
-        "multi_dc": compute_all_metrics(yt_m, yp_m),
+        "baseline": compute_all_metrics(yt_b, yp_b, reference=ref_b),
+        "single_dc": compute_all_metrics(yt_s, yp_s, reference=ref_s),
+        "multi_dc": compute_all_metrics(yt_m, yp_m, reference=ref_m),
     }
 
     # -----------------------------------------------------------------
@@ -239,10 +264,10 @@ def compare_forecasts(
         {rows_comp}
     </table>
 
-    <h3>Note on Parameter Counts</h3>
-    <p>The Flatten→Dense architecture means the first Dense layer has different parameter counts
-    across arms (baseline: ~9.6K, single-DC: ~28.8K, multi-DC: ~86.4K). This ablation tests
-    whether DC features help <em>at all</em>, not whether they help given equal capacity.</p>
+    <h3>Architecture Note</h3>
+    <p>With bottleneck projection (Dense(128)), all arms have equal effective capacity after
+    the bottleneck regardless of input feature count. The bottleneck acts as implicit feature
+    selection, projecting different input dimensions to the same representation size.</p>
     </body></html>
     """
     os.makedirs(os.path.dirname(visualization.path) or ".", exist_ok=True)
