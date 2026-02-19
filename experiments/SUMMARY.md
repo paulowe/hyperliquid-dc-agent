@@ -26,7 +26,8 @@ However, absolute R² is low (~0.04 for single-DC at shift=50). The model predic
 | 010 | 100 | 128 | 0 | 0 | 20 | - | -2.395 | **-0.024** | -13.31 | **DC RMSE +45%!** Both R²<0 but DC far better |
 | 011 | 50 | 128 | 0 | 0 | 20 | - | **0.198** | -1.212 | -7.517 | Threshold=0.005; DA=55.8% but R² unstable |
 | 012 | 50 | 128 | 0 | 0 | 20 | 42 | **0.278** | 0.039 | -16.38 | Basic seed insufficient; DC wins from 005 was noise |
-| 013 | 50 | 128 | 0 | 0 | 20 | 42* | -0.266 | **0.039** | -9.071 | *Full det.: DC wins +12.9% RMSE, DA=51.9% |
+| 013 | 50 | 128 | 0 | 0 | 20 | 42* | -0.266 | **0.039** | -9.071 | *Full det.: DC DA=51.9%, thr=0.001 |
+| 014 | 50 | 128 | 0 | 0 | 20 | 42* | -0.266 | -1.901 | -9.071 | *Full det.: DC DA=**53.4%**, thr=0.005; BL+Multi identical to 013 |
 
 ## Phase 1: Bottleneck Sweep (Complete — 6 values tested)
 
@@ -61,7 +62,8 @@ Bottleneck=128 is still the best *absolute* R² observed, but the DC-vs-baseline
 | 0.001 (exp 005) | 0.871 | 0.874 | ~0.478* | *Old metric (np.diff), not comparable |
 | 0.001 (exp 012) | 0.278 | 0.039 | 0.439 | Basic seed; DA below random |
 | 0.001 (exp 013) | -0.266 | 0.039 | **0.519** | Full determinism; DA above random! |
-| 0.005 (exp 011) | 0.198 | -1.212 | **0.558** | First DA > 50%! But R² unstable |
+| 0.005 (exp 011) | 0.198 | -1.212 | **0.558** | No determinism; DA=55.8% |
+| 0.005 (exp 014) | -0.266 | -1.901 | **0.534** | Full determinism; DA=53.4% confirmed |
 
 **WARNING: Training stochasticity.** Baseline R² varies from 0.198 to 0.871 across runs with identical architecture (exps 005, 011, 012). Cross-experiment R² comparisons are unreliable.
 
