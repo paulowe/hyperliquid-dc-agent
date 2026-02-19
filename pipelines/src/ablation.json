@@ -2839,7 +2839,7 @@
           "parameterType": "NUMBER_INTEGER"
         },
         "single_dc_threshold": {
-          "defaultValue": 0.001,
+          "defaultValue": 0.005,
           "isOptional": true,
           "parameterType": "NUMBER_DOUBLE"
         },

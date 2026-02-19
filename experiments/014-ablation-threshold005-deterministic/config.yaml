@@ -1,0 +1,46 @@
+# Experiment 014: Threshold=0.005 with Full Determinism
+# Pipeline: dc-ablation-pipeline
+# Date: 2026-02-19
+#
+# Re-runs exp 011 config (threshold=0.005) with full TF determinism.
+# Exp 011 showed DA=55.8% for single-DC (highest ever) but baseline
+# R² was unexpectedly low (0.198). With determinism, we can verify
+# whether the directional accuracy result is reproducible.
+#
+# Changes from exp 013:
+# - single_dc_threshold=0.005 (was 0.001)
+# - Full determinism enabled (same as exp 013)
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+
+model:
+  architecture: Flatten -> Dense(128, relu) [bottleneck] -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
+  bottleneck_dim: 128
+  dropout_rate: 0.0
+  l2_reg: 0.0
+
+windowing:
+  input_width: 50
+  shift: 50
+  label_width: 1
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5
+  random_seed: 42
+
+dc:
+  single_dc_threshold: 0.005
+  dc_thresholds: [0.001, 0.005, 0.010, 0.015]
+
+determinism:
+  tf_op_determinism: true
+  explicit_shuffle_seed: true
+  pythonhashseed: "42"

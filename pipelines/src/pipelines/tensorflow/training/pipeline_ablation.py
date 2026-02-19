@@ -71,7 +71,7 @@ def ablation_pipeline(
     start_time: str = "2025-05-01 00:00:00",
     end_time: str = "2025-08-01 00:00:00",
     dc_thresholds: list = [0.001, 0.005, 0.010, 0.015],
-    single_dc_threshold: float = 0.001,
+    single_dc_threshold: float = 0.005,
     input_width: int = 50,
     shift: int = 50,
     label_width: int = 1,
@@ -112,7 +112,7 @@ def ablation_pipeline(
         ],
         distribute_strategy="single",
         patience=5,
-        # exp 013: full TF determinism (enable_op_determinism + explicit shuffle seed)
+        # exp 014: threshold=0.005 with full determinism (verify DA=55.8% from exp 011)
         bottleneck_dim=128,
         dropout_rate=0.0,
         l2_reg=0.0,
