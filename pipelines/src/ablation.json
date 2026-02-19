@@ -2157,9 +2157,7 @@
           }
         },
         "custom-forecast-train-job": {
-          "cachingOptions": {
-            "enableCache": true
-          },
+          "cachingOptions": {},
           "componentRef": {
             "name": "comp-custom-forecast-train-job"
           },
@@ -2211,7 +2209,8 @@
                     "loss_fn": "MeanAbsoluteError",
                     "model_label": "baseline",
                     "optimizer": "AdamW",
-                    "patience": 5.0
+                    "patience": 5.0,
+                    "random_seed": 42.0
                   }
                 }
               },
@@ -2268,9 +2267,7 @@
           }
         },
         "custom-forecast-train-job-2": {
-          "cachingOptions": {
-            "enableCache": true
-          },
+          "cachingOptions": {},
           "componentRef": {
             "name": "comp-custom-forecast-train-job-2"
           },
@@ -2323,6 +2320,7 @@
                     "model_label": "single_dc",
                     "optimizer": "AdamW",
                     "patience": 5.0,
+                    "random_seed": 42.0,
                     "threshold": "{{$.inputs.parameters['pipelinechannel--single_dc_threshold']}}"
                   }
                 }
@@ -2381,9 +2379,7 @@
           }
         },
         "custom-forecast-train-job-3": {
-          "cachingOptions": {
-            "enableCache": true
-          },
+          "cachingOptions": {},
           "componentRef": {
             "name": "comp-custom-forecast-train-job-3"
           },
@@ -2435,7 +2431,8 @@
                     "loss_fn": "MeanAbsoluteError",
                     "model_label": "multi_dc",
                     "optimizer": "AdamW",
-                    "patience": 5.0
+                    "patience": 5.0,
+                    "random_seed": 42.0
                   }
                 }
               },
@@ -2842,7 +2839,7 @@
           "parameterType": "NUMBER_INTEGER"
         },
         "single_dc_threshold": {
-          "defaultValue": 0.005,
+          "defaultValue": 0.001,
           "isOptional": true,
           "parameterType": "NUMBER_DOUBLE"
         },

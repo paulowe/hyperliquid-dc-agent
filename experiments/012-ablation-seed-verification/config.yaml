@@ -1,0 +1,46 @@
+# Experiment 012: Seed Verification (re-run exp 005 config with random_seed=42)
+# Pipeline: dc-ablation-pipeline
+# Date: 2026-02-19
+#
+# Re-runs exp 005 configuration (threshold=0.001, shift=50, bottleneck=128)
+# with random_seed=42 for reproducibility verification.
+#
+# Goals:
+# 1. Verify R² stability: exp 005 got R²=0.871 baseline, exp 011 got R²=0.198
+#    with identical architecture. Does seed control fix this?
+# 2. Get reference_price directional accuracy for threshold=0.001 (not available in exp 005)
+# 3. Establish a reproducible baseline for future experiments
+#
+# Changes from exp 011:
+# - single_dc_threshold=0.001 (was 0.005 in exp 011)
+# - random_seed=42 added to hparams (NEW — first seeded experiment)
+# - Training caching disabled (force re-train with new seed)
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+
+model:
+  architecture: Flatten -> Dense(128, relu) [bottleneck] -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
+  bottleneck_dim: 128
+  dropout_rate: 0.0
+  l2_reg: 0.0
+
+windowing:
+  input_width: 50
+  shift: 50
+  label_width: 1
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5
+  random_seed: 42
+
+dc:
+  single_dc_threshold: 0.001
+  dc_thresholds: [0.001, 0.005, 0.010, 0.015]

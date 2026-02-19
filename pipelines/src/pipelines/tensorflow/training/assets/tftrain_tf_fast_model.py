@@ -2,6 +2,7 @@ import argparse
 import os
 import json
 import logging
+import random
 import google.cloud.logging
 import sys
 from pathlib import Path
@@ -67,6 +68,7 @@ DEFAULT_HPARAMS = dict(
     use_mixed_precision=True,          # only takes effect if a GPU is present
     use_xla_jit=True,                 # try XLA; keep if step time drops
     cache_to_disk="/tmp/dcvae_data.cache",  # set to a path (e.g., "/tmp/ts.cache") to cache-to-file
+    random_seed=42,  # reproducibility: seeds TF, NumPy, and Python random
 )
 
 # Helper function to create dataset
@@ -656,6 +658,15 @@ def main():
 
     hparams["hidden_units"] = _normalise_hidden_units(hparams.get("hidden_units"))
     logging.info(f"Using model hyper-parameters: {hparams}")
+
+    # ============================================================
+    # Set random seeds for reproducibility
+    # ============================================================
+    seed = int(hparams.get("random_seed", 42))
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    logging.info(f"Random seed set to {seed}")
 
     # ============================================================
     # Enable JIT + mixed precision (GPU only)
