@@ -1166,9 +1166,7 @@
                   }
                 },
                 "input_width": {
-                  "runtimeValue": {
-                    "constant": 50.0
-                  }
+                  "componentInputParameter": "pipelinechannel--input_width"
                 },
                 "label_columns": {
                   "runtimeValue": {
@@ -1178,14 +1176,10 @@
                   }
                 },
                 "label_width": {
-                  "runtimeValue": {
-                    "constant": 1.0
-                  }
+                  "componentInputParameter": "pipelinechannel--label_width"
                 },
                 "shift": {
-                  "runtimeValue": {
-                    "constant": 50.0
-                  }
+                  "componentInputParameter": "pipelinechannel--shift"
                 }
               }
             },
@@ -1214,8 +1208,17 @@
           "pipelinechannel--dc_thresholds-loop-item": {
             "parameterType": "STRING"
           },
+          "pipelinechannel--input_width": {
+            "parameterType": "NUMBER_INTEGER"
+          },
+          "pipelinechannel--label_width": {
+            "parameterType": "NUMBER_INTEGER"
+          },
           "pipelinechannel--project_id": {
             "parameterType": "STRING"
+          },
+          "pipelinechannel--shift": {
+            "parameterType": "NUMBER_INTEGER"
           }
         }
       },
@@ -2189,7 +2192,7 @@
                 "runtimeValue": {
                   "constant": {
                     "batch_size": 100.0,
-                    "bottleneck_dim": 96.0,
+                    "bottleneck_dim": 128.0,
                     "distribute_strategy": "single",
                     "dropout_rate": 0.0,
                     "epochs": 20.0,
@@ -2300,7 +2303,7 @@
                 "runtimeValue": {
                   "constant": {
                     "batch_size": 100.0,
-                    "bottleneck_dim": 96.0,
+                    "bottleneck_dim": 128.0,
                     "distribute_strategy": "single",
                     "dropout_rate": 0.0,
                     "epochs": 20.0,
@@ -2413,7 +2416,7 @@
                 "runtimeValue": {
                   "constant": {
                     "batch_size": 100.0,
-                    "bottleneck_dim": 96.0,
+                    "bottleneck_dim": 128.0,
                     "distribute_strategy": "single",
                     "dropout_rate": 0.0,
                     "epochs": 20.0,
@@ -2642,8 +2645,17 @@
               "pipelinechannel--dc_thresholds": {
                 "componentInputParameter": "dc_thresholds"
               },
+              "pipelinechannel--input_width": {
+                "componentInputParameter": "input_width"
+              },
+              "pipelinechannel--label_width": {
+                "componentInputParameter": "label_width"
+              },
               "pipelinechannel--project_id": {
                 "componentInputParameter": "project_id"
+              },
+              "pipelinechannel--shift": {
+                "componentInputParameter": "shift"
               }
             }
           },
@@ -2734,9 +2746,7 @@
                 }
               },
               "input_width": {
-                "runtimeValue": {
-                  "constant": 50.0
-                }
+                "componentInputParameter": "input_width"
               },
               "label_columns": {
                 "runtimeValue": {
@@ -2746,14 +2756,10 @@
                 }
               },
               "label_width": {
-                "runtimeValue": {
-                  "constant": 1.0
-                }
+                "componentInputParameter": "label_width"
               },
               "shift": {
-                "runtimeValue": {
-                  "constant": 50.0
-                }
+                "componentInputParameter": "shift"
               }
             }
           },
@@ -2800,10 +2806,20 @@
           "isOptional": true,
           "parameterType": "STRING"
         },
+        "input_width": {
+          "defaultValue": 50.0,
+          "isOptional": true,
+          "parameterType": "NUMBER_INTEGER"
+        },
         "instrument": {
           "defaultValue": "BTC-USD",
           "isOptional": true,
           "parameterType": "STRING"
+        },
+        "label_width": {
+          "defaultValue": 1.0,
+          "isOptional": true,
+          "parameterType": "NUMBER_INTEGER"
         },
         "pipeline_files_gcs_path": {
           "defaultValue": "gs://derivatives-417104-pl-assets",
@@ -2819,6 +2835,11 @@
           "defaultValue": "us-central1",
           "isOptional": true,
           "parameterType": "STRING"
+        },
+        "shift": {
+          "defaultValue": 10.0,
+          "isOptional": true,
+          "parameterType": "NUMBER_INTEGER"
         },
         "single_dc_threshold": {
           "defaultValue": 0.001,

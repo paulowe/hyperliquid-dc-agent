@@ -72,6 +72,9 @@ def ablation_pipeline(
     end_time: str = "2025-08-01 00:00:00",
     dc_thresholds: list = [0.001, 0.005, 0.010, 0.015],
     single_dc_threshold: float = 0.001,
+    input_width: int = 50,
+    shift: int = 10,
+    label_width: int = 1,
 ):
     """3-arm DC feature ablation pipeline (v2: equal capacity + regularization).
 
@@ -109,8 +112,8 @@ def ablation_pipeline(
         ],
         distribute_strategy="single",
         patience=5,
-        # exp 008: bottleneck=96, midpoint between 64 (too tight) and 128 (optimal)
-        bottleneck_dim=96,
+        # exp 009: shift=10 (prediction horizon sweep), bottleneck=128 (optimal)
+        bottleneck_dim=128,
         dropout_rate=0.0,
         l2_reg=0.0,
     )
@@ -201,9 +204,9 @@ def ablation_pipeline(
             train_data=x_splits.outputs["train_data"],
             valid_data=x_splits.outputs["valid_data"],
             test_data=x_splits.outputs["test_data"],
-            input_width=50,
-            label_width=1,
-            shift=50,
+            input_width=input_width,
+            label_width=label_width,
+            shift=shift,
             batch_size=32,
             feature_names=SINGLE_DC_FEATURES,
             label_columns=LABEL_COLUMNS,
@@ -277,9 +280,9 @@ def ablation_pipeline(
         train_data=single_dc_splits.outputs["train_data"],
         valid_data=single_dc_splits.outputs["valid_data"],
         test_data=single_dc_splits.outputs["test_data"],
-        input_width=50,
-        label_width=1,
-        shift=50,
+        input_width=input_width,
+        label_width=label_width,
+        shift=shift,
         batch_size=32,
         feature_names=SINGLE_DC_FEATURES,
         label_columns=LABEL_COLUMNS,

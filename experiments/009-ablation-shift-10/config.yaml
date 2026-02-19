@@ -1,0 +1,42 @@
+# Experiment 009: Prediction Horizon (shift=10)
+# Pipeline: dc-ablation-pipeline
+# Date: 2026-02-19
+#
+# First experiment in prediction horizon sweep.
+# Tests whether a shorter prediction gap improves forecasting
+# and changes the relative value of DC features.
+#
+# Previous experiments used shift=50 (gap of 50 ticks between
+# input window end and prediction target). This tests shift=10.
+#
+# Windowing semantics:
+#   input:  ticks[0..49]  (50 ticks)
+#   gap:    ticks[50..59] (10 ticks, ignored)
+#   label:  tick[60]      (1 tick, PRICE_std)
+#
+# Cache impact: DC detection, feature engineering, splitting all CACHED.
+# Only windowing, training, and comparison re-run.
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+
+model:
+  architecture: Flatten -> Dense(128, relu) [bottleneck] -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
+  bottleneck_dim: 128
+  dropout_rate: 0.0
+  l2_reg: 0.0
+
+windowing:
+  input_width: 50
+  shift: 10       # was 50 in exps 001-008
+  label_width: 1
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5
