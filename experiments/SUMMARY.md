@@ -3,12 +3,19 @@
 ## Research Question
 Do Directional Change (DC) features improve BTC-USD price forecasting accuracy?
 
-## Answer (Updated after exp 013)
-**Yes — DC features help through TWO mechanisms:**
-1. **Training stabilization**: Single-DC RMSE is remarkably stable (0.5223 across runs) while baseline R² varies -0.27 to 0.87. DC features constrain the loss surface, acting as structural regularization.
-2. **Directional signal**: DA=51.9% (threshold=0.001) and DA=55.8% (threshold=0.005) vs baseline ~44%.
+## Answer (Final — after 15 experiments)
+**Yes — DC features improve directional accuracy and stabilize training.**
 
-However, absolute R² is low (~0.04 for single-DC at shift=50). The model predicts direction but not magnitude well. At shift=100, DC gives +45.1% RMSE improvement. Multi-DC always fails.
+With deterministic training (seed=42, full TF op determinism):
+1. **Directional accuracy**: threshold=0.005 gives DA=53.4%, threshold=0.001 gives DA=51.9% (vs baseline 44.1%). Peak at 0.005; collapses at 0.010.
+2. **Training stabilization**: Single-DC RMSE is reproducible across runs while baseline R² varies -0.27 to 0.87.
+3. **Horizon effect**: DC value increases with prediction horizon (+45.1% RMSE at shift=100).
+
+**Optimal configs for production:**
+- **Direction-focused**: threshold=0.005, shift=50, bottleneck=128 → DA=53.4%
+- **Magnitude-focused**: threshold=0.001, shift=50, bottleneck=128 → R²=0.039, RMSE=0.522
+
+**Limitations**: R² is low (~0.04 at best). Multi-DC always fails. Model architecture (3-layer dense) is too simple for high R².
 
 ## Experiment Matrix
 
@@ -27,7 +34,8 @@ However, absolute R² is low (~0.04 for single-DC at shift=50). The model predic
 | 011 | 50 | 128 | 0 | 0 | 20 | - | **0.198** | -1.212 | -7.517 | Threshold=0.005; DA=55.8% but R² unstable |
 | 012 | 50 | 128 | 0 | 0 | 20 | 42 | **0.278** | 0.039 | -16.38 | Basic seed insufficient; DC wins from 005 was noise |
 | 013 | 50 | 128 | 0 | 0 | 20 | 42* | -0.266 | **0.039** | -9.071 | *Full det.: DC DA=51.9%, thr=0.001 |
-| 014 | 50 | 128 | 0 | 0 | 20 | 42* | -0.266 | -1.901 | -9.071 | *Full det.: DC DA=**53.4%**, thr=0.005; BL+Multi identical to 013 |
+| 014 | 50 | 128 | 0 | 0 | 20 | 42* | -0.266 | -1.901 | -9.071 | *Full det.: DC DA=**53.4%**, thr=0.005 |
+| 015 | 50 | 128 | 0 | 0 | 20 | 42* | -0.266 | -3.917 | -9.071 | *Full det.: DA collapsed (44.4%), thr=0.010 |
 
 ## Phase 1: Bottleneck Sweep (Complete — 6 values tested)
 
@@ -55,7 +63,7 @@ Bottleneck=128 is still the best *absolute* R² observed, but the DC-vs-baseline
 
 **Caveat: R² at short horizons may be inflated** by autocorrelation (target at tick[60] highly correlated with input at tick[49]).
 
-## Phase 3: DC Threshold Sweep (In Progress)
+## Phase 3: DC Threshold Sweep (Complete — 4 values tested with determinism)
 
 | Threshold | Baseline R² | Single-DC R² | Dir. Acc. (ref) | Note |
 |:---------:|:-----------:|:------------:|:---------------:|:----:|
@@ -64,19 +72,22 @@ Bottleneck=128 is still the best *absolute* R² observed, but the DC-vs-baseline
 | 0.001 (exp 013) | -0.266 | 0.039 | **0.519** | Full determinism; DA above random! |
 | 0.005 (exp 011) | 0.198 | -1.212 | **0.558** | No determinism; DA=55.8% |
 | 0.005 (exp 014) | -0.266 | -1.901 | **0.534** | Full determinism; DA=53.4% confirmed |
+| 0.010 (exp 015) | -0.266 | -3.917 | 0.444 | DA collapsed to baseline level |
 
-**WARNING: Training stochasticity.** Baseline R² varies from 0.198 to 0.871 across runs with identical architecture (exps 005, 011, 012). Cross-experiment R² comparisons are unreliable.
+**Finding: threshold=0.005 is optimal for directional accuracy.** DA peaks at 53.4% then collapses at 0.010. R²/RMSE worsen monotonically with larger thresholds — 0.001 is best for magnitude, 0.005 is best for direction.
 
-**Finding: threshold=0.005 captures directional info.** Single-DC DA=55.8% vs baseline 44.2% (exp 011). This 14pp gap is likely real. But R² is terrible (-1.212).
-
-## Phase 4: Reproducibility (In Progress)
+## Phase 4: Reproducibility (Complete)
 
 | Exp | Determinism | Baseline R² | Note |
 |:---:|:-----------:|:-----------:|:----:|
 | 005 | None | 0.871 | Original "best" result |
 | 011 | None | 0.198 | Same architecture, wildly different |
 | 012 | Basic seed | 0.278 | tf.random.set_seed only — NOT deterministic |
-| 013 | Full | -0.266 | enable_op_determinism; DC stable (RMSE=0.5223 in both 012/013) |
+| 013 | Full | -0.266 | enable_op_determinism; BL+Multi reproducible across 013-015 |
+| 014 | Full | -0.266 | Bit-for-bit identical to 013 for BL+Multi |
+| 015 | Full | -0.266 | Bit-for-bit identical to 013 for BL+Multi |
+
+**Finding: Full TF determinism achieves bit-for-bit reproducibility.** Baseline and multi-DC produce identical results across exps 013–015 (same hparams + data = same output). This confirms `tf.config.experimental.enable_op_determinism()` + `tf.keras.utils.set_random_seed(42)` + explicit shuffle seed works.
 
 ## Key Insights
 
