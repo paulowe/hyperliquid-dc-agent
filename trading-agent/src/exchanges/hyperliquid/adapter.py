@@ -603,7 +603,9 @@ class HyperliquidAdapter(ExchangeAdapter):
             from interfaces.strategy import Position
 
             # Get user state which includes positions
-            user_state = self.info.user_state(self.exchange.wallet.address)
+            # Use account_address if set (API wallet delegation), else wallet address
+            query_addr = getattr(self.exchange, "account_address", None) or self.exchange.wallet.address
+            user_state = self.info.user_state(query_addr)
             positions = []
 
             # Parse positions from user state
@@ -714,8 +716,9 @@ class HyperliquidAdapter(ExchangeAdapter):
             }
 
         try:
-            # Get user state
-            user_state = self.info.user_state(self.exchange.wallet.address)
+            # Get user state (use account_address for delegation)
+            query_addr = getattr(self.exchange, "account_address", None) or self.exchange.wallet.address
+            user_state = self.info.user_state(query_addr)
 
             # Calculate account metrics
             total_value = 0.0

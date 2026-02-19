@@ -39,11 +39,16 @@ class TrailingRiskManager:
         initial_stop_loss_pct: float,
         initial_take_profit_pct: float,
         trail_pct: float,
+        min_profit_to_trail_pct: float = 0.0,
     ):
         self.asset = asset
         self._sl_pct = initial_stop_loss_pct
         self._tp_pct = initial_take_profit_pct
         self._trail_pct = trail_pct
+        # Don't start trailing until profit exceeds this percentage from entry.
+        # Default 0.0 = trail immediately (original behavior).
+        # Recommended: set to ~sl_pct so SL doesn't ratchet above entry on noise.
+        self._min_profit_to_trail = min_profit_to_trail_pct
 
         # Position state (None = no position)
         self._side: Optional[str] = None
@@ -177,18 +182,21 @@ class TrailingRiskManager:
         if price > self._high_water_mark:
             self._high_water_mark = price
 
-            # Ratchet SL: lock in trail_pct of profit from entry
-            new_sl = self._entry_price + (self._high_water_mark - self._entry_price) * self._trail_pct
-            self._current_sl = max(self._current_sl, new_sl)
+            # Only trail SL/TP if profit exceeds minimum threshold
+            profit_pct = (price - self._entry_price) / self._entry_price
+            if profit_pct >= self._min_profit_to_trail:
+                # Ratchet SL: lock in trail_pct of profit from entry
+                new_sl = self._entry_price + (self._high_water_mark - self._entry_price) * self._trail_pct
+                self._current_sl = max(self._current_sl, new_sl)
 
-            # Push TP: always based on current high water mark
-            new_tp = self._high_water_mark * (1 + self._tp_pct)
-            self._current_tp = max(self._current_tp, new_tp)
+                # Push TP: always based on current high water mark
+                new_tp = self._high_water_mark * (1 + self._tp_pct)
+                self._current_tp = max(self._current_tp, new_tp)
 
-            logger.debug(
-                "TrailingRM LONG: hwm=%.2f SL=%.2f TP=%.2f",
-                self._high_water_mark, self._current_sl, self._current_tp,
-            )
+                logger.debug(
+                    "TrailingRM LONG: hwm=%.2f SL=%.2f TP=%.2f",
+                    self._high_water_mark, self._current_sl, self._current_tp,
+                )
 
         return []
 
@@ -206,18 +214,21 @@ class TrailingRiskManager:
         if price < self._low_water_mark:
             self._low_water_mark = price
 
-            # Ratchet SL down: lock in trail_pct of profit from entry
-            new_sl = self._entry_price - (self._entry_price - self._low_water_mark) * self._trail_pct
-            self._current_sl = min(self._current_sl, new_sl)
+            # Only trail SL/TP if profit exceeds minimum threshold
+            profit_pct = (self._entry_price - price) / self._entry_price
+            if profit_pct >= self._min_profit_to_trail:
+                # Ratchet SL down: lock in trail_pct of profit from entry
+                new_sl = self._entry_price - (self._entry_price - self._low_water_mark) * self._trail_pct
+                self._current_sl = min(self._current_sl, new_sl)
 
-            # Push TP lower: based on current low water mark
-            new_tp = self._low_water_mark * (1 - self._tp_pct)
-            self._current_tp = min(self._current_tp, new_tp)
+                # Push TP lower: based on current low water mark
+                new_tp = self._low_water_mark * (1 - self._tp_pct)
+                self._current_tp = min(self._current_tp, new_tp)
 
-            logger.debug(
-                "TrailingRM SHORT: lwm=%.2f SL=%.2f TP=%.2f",
-                self._low_water_mark, self._current_sl, self._current_tp,
-            )
+                logger.debug(
+                    "TrailingRM SHORT: lwm=%.2f SL=%.2f TP=%.2f",
+                    self._low_water_mark, self._current_sl, self._current_tp,
+                )
 
         return []
 

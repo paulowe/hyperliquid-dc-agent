@@ -155,15 +155,16 @@ class TestTrailingRatchetAndExit:
 
     def test_short_ratchet_then_exit(self):
         """SHORT: price drops (profit) → SL ratchets down → bounce → exit at ratcheted level."""
-        strategy = DCOvershootStrategy(make_config())
+        # Set min_profit_to_trail to 0 for this test to ensure ratcheting activates
+        strategy = DCOvershootStrategy(make_config(min_profit_to_trail_pct=0.0))
         strategy.start()
         signal, entry_price, ts = trigger_pdcc_down(strategy)
         strategy.on_trade_executed(signal, entry_price, signal.size)
 
         initial_sl = strategy._trailing_rm.current_sl_price
 
-        # Price drops (profit for short), but not to TP
-        profit_price = entry_price * 0.999  # 0.1% drop, below TP threshold
+        # Price drops significantly (profit for short), but not to TP
+        profit_price = entry_price * 0.9985  # 0.15% drop, above TP but well into profit
         ts += 1.0
         strategy.generate_signals(md(profit_price, ts), [], 100_000.0)
 

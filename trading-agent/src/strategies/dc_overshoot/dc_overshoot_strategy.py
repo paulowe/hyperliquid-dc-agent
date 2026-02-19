@@ -54,6 +54,7 @@ class DCOvershootStrategy(TradingStrategy):
             initial_stop_loss_pct=self._cfg.initial_stop_loss_pct,
             initial_take_profit_pct=self._cfg.initial_take_profit_pct,
             trail_pct=self._cfg.trail_pct,
+            min_profit_to_trail_pct=self._cfg.min_profit_to_trail_pct,
         )
 
         # Counters

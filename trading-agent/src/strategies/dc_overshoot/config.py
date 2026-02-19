@@ -37,6 +37,7 @@ class DCOvershootConfig:
     initial_stop_loss_pct: float = 0.003  # 0.3% initial SL from entry
     initial_take_profit_pct: float = 0.002  # 0.2% initial TP (≈ 2x threshold)
     trail_pct: float = 0.5  # Lock in 50% of profit as new SL floor
+    min_profit_to_trail_pct: float = 0.001  # Don't trail until 0.1% profit (prevents noise ratcheting)
 
     # Cooldown between entry signals
     cooldown_seconds: float = 10.0
@@ -79,6 +80,8 @@ class DCOvershootConfig:
         max_pos = float(d.get("max_position_size_usd", 200.0))
         cooldown = float(d.get("cooldown_seconds", 10.0))
 
+        min_profit = float(d.get("min_profit_to_trail_pct", 0.001))
+
         # Validate ranges
         if sl_pct < 0:
             raise ValueError(
@@ -113,6 +116,7 @@ class DCOvershootConfig:
             initial_stop_loss_pct=sl_pct,
             initial_take_profit_pct=tp_pct,
             trail_pct=trail,
+            min_profit_to_trail_pct=min_profit,
             cooldown_seconds=cooldown,
             max_open_positions=int(d.get("max_open_positions", 1)),
             log_events=bool(d.get("log_events", True)),
