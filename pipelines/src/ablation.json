@@ -2837,12 +2837,12 @@
           "parameterType": "STRING"
         },
         "shift": {
-          "defaultValue": 100.0,
+          "defaultValue": 50.0,
           "isOptional": true,
           "parameterType": "NUMBER_INTEGER"
         },
         "single_dc_threshold": {
-          "defaultValue": 0.001,
+          "defaultValue": 0.005,
           "isOptional": true,
           "parameterType": "NUMBER_DOUBLE"
         },

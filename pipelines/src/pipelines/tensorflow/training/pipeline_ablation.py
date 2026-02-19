@@ -71,9 +71,9 @@ def ablation_pipeline(
     start_time: str = "2025-05-01 00:00:00",
     end_time: str = "2025-08-01 00:00:00",
     dc_thresholds: list = [0.001, 0.005, 0.010, 0.015],
-    single_dc_threshold: float = 0.001,
+    single_dc_threshold: float = 0.005,
     input_width: int = 50,
-    shift: int = 100,
+    shift: int = 50,
     label_width: int = 1,
 ):
     """3-arm DC feature ablation pipeline (v2: equal capacity + regularization).
@@ -112,7 +112,7 @@ def ablation_pipeline(
         ],
         distribute_strategy="single",
         patience=5,
-        # exp 010: shift=100 (longer horizon), bottleneck=128 (optimal)
+        # exp 011: threshold=0.005 sweep at shift=50, bottleneck=128 (optimal)
         bottleneck_dim=128,
         dropout_rate=0.0,
         l2_reg=0.0,
