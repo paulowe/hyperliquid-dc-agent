@@ -20,6 +20,7 @@ Do Directional Change (DC) features improve BTC-USD price forecasting accuracy?
 | 008 | 50 | 96 | 0 | 0 | 20 | **0.235** | 0.097 | -8.673 | Non-monotonic valley at 96 |
 | 009 | 10 | 128 | 0 | 0 | 20 | **0.897** | 0.842 | -0.960 | Shorter horizon easier but DC hurts |
 | 010 | 100 | 128 | 0 | 0 | 20 | -2.395 | **-0.024** | -13.31 | **DC RMSE +45%!** Both R²<0 but DC far better |
+| 011 | 50 | 128 | 0 | 0 | 20 | **0.198** | -1.212 | -7.517 | Threshold=0.005; DA=55.8% but R² unstable |
 
 ## Phase 1: Bottleneck Sweep (Complete — 6 values tested)
 
@@ -46,6 +47,17 @@ Do Directional Change (DC) features improve BTC-USD price forecasting accuracy?
 
 **Caveat: R² at short horizons may be inflated** by autocorrelation (target at tick[60] highly correlated with input at tick[49]).
 
+## Phase 3: DC Threshold Sweep (In Progress)
+
+| Threshold | Baseline R² | Single-DC R² | Dir. Acc. (ref) | Note |
+|:---------:|:-----------:|:------------:|:---------------:|:----:|
+| 0.001 (exp 005) | 0.871 | 0.874 | ~0.478* | *Old metric (np.diff), not comparable |
+| 0.005 (exp 011) | 0.198 | -1.212 | **0.558** | First DA > 50%! But R² unstable |
+
+**WARNING: Training stochasticity.** Baseline R² varies from 0.198 to 0.871 across runs with identical architecture. Cross-experiment R² comparisons are unreliable. Directional accuracy (with reference_price) may be more stable.
+
+**Finding: threshold=0.005 captures directional info.** Single-DC DA=55.8% vs baseline 44.2%. But R² is terrible (-1.212), suggesting the model predicts direction but not magnitude.
+
 ## Key Insights
 
 1. **Bottleneck=128 is definitively optimal**: Best absolute R² for both baseline (0.871) and single-DC (0.874) at shift=50
@@ -57,7 +69,8 @@ Do Directional Change (DC) features improve BTC-USD price forecasting accuracy?
 7. **DC feature value is monotonically increasing with prediction horizon**: -23.7% RMSE at shift=10, +1.1% at shift=50, **+45.1% at shift=100**. DC regime events capture market structure at timescales matching medium-to-long horizons
 8. **Shorter horizons inflate R²**: Baseline R²=0.897 at shift=10 vs 0.871 at shift=50, but this partly reflects autocorrelation
 9. **Model architecture limits long-range prediction**: Both arms have R²<0 at shift=100. Would need LSTM/Transformer for longer horizons, but DC features would be essential
-9. **Directional accuracy metric is uninformative**: All arms score ~47-50% (random) using np.diff. Reference_price metric added (locally) to measure UP/DOWN vs current price — will be deployed in exp 010+
+10. **Reference_price directional accuracy reveals direction-only signal**: Single-DC (0.005) achieves 55.8% DA despite R²=-1.212. Model captures direction from DC regime features but not magnitude
+11. **Training is stochastic — R² varies 0.2-0.87 across runs**: Small dense networks are highly sensitive to initialization. Need random seed control or multi-run averaging for reliable cross-experiment comparison
 
 ## Architecture
 ```
