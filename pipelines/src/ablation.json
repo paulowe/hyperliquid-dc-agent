@@ -2837,7 +2837,7 @@
           "parameterType": "STRING"
         },
         "shift": {
-          "defaultValue": 10.0,
+          "defaultValue": 100.0,
           "isOptional": true,
           "parameterType": "NUMBER_INTEGER"
         },

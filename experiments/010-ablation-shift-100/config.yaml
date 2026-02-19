@@ -1,0 +1,46 @@
+# Experiment 010: Longer Prediction Horizon (shift=100)
+# Pipeline: dc-ablation-pipeline
+# Date: 2026-02-19
+#
+# Tests whether DC feature advantage grows at longer prediction horizons.
+# Exp 009 showed DC hurts at shift=10; exp 005 showed DC helps at shift=50.
+# If DC advantage increases at shift=100, it confirms DC regime info is most
+# valuable for medium-to-long-term prediction.
+#
+# Also first experiment with reference_price in predictions CSV,
+# enabling meaningful directional accuracy (UP/DOWN vs current price).
+#
+# Windowing semantics:
+#   input:  ticks[0..49]   (50 ticks)
+#   gap:    ticks[50..149] (100 ticks, ignored)
+#   label:  tick[150]      (1 tick, PRICE_std)
+#
+# Cache impact: upstream steps cached, only windowing+training+comparison re-run.
+
+pipeline: pipeline_ablation.py
+
+data:
+  instrument: BTC-USD
+  start_time: "2025-05-01 00:00:00"
+  end_time: "2025-08-01 00:00:00"
+
+model:
+  architecture: Flatten -> Dense(128, relu) [bottleneck] -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
+  bottleneck_dim: 128
+  dropout_rate: 0.0
+  l2_reg: 0.0
+
+windowing:
+  input_width: 50
+  shift: 100      # was 50 in phase 1, 10 in exp 009
+  label_width: 1
+
+hparams:
+  batch_size: 100
+  epochs: 20
+  learning_rate: 0.01
+  patience: 5
+
+improvements:
+  - reference_price added to prediction CSV (last input PRICE_std)
+  - compare_forecasts computes directional accuracy vs current price
