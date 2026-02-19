@@ -7,16 +7,19 @@ Add new strategies by implementing the TradingStrategy interface.
 Available strategies:
 - BasicGridStrategy: Grid trading with geometric spacing and rebalancing
 - DCForecastStrategy: DC detection + ML forecast for directional trading
+- DCOvershootStrategy: Model-free DC heuristic with trailing risk management
 """
 
 from .grid import BasicGridStrategy
 from .dc_forecast import DCForecastStrategy
+from .dc_overshoot.dc_overshoot_strategy import DCOvershootStrategy
 
 # Strategy registry - makes it easy to add new strategies
 STRATEGY_REGISTRY = {
     "basic_grid": BasicGridStrategy,
     "grid": BasicGridStrategy,  # Alias
     "dc_forecast": DCForecastStrategy,
+    "dc_overshoot": DCOvershootStrategy,
 }
 
 
@@ -39,4 +42,10 @@ def create_strategy(strategy_type: str, config: dict):
     return strategy_class(config)
 
 
-__all__ = ["BasicGridStrategy", "DCForecastStrategy", "STRATEGY_REGISTRY", "create_strategy"]
+__all__ = [
+    "BasicGridStrategy",
+    "DCForecastStrategy",
+    "DCOvershootStrategy",
+    "STRATEGY_REGISTRY",
+    "create_strategy",
+]

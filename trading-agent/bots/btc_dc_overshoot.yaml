@@ -1,0 +1,61 @@
+# DC Overshoot Strategy - BTC on Hyperliquid Testnet
+#
+# Model-free strategy exploiting DC theory heuristic:
+# After a Directional Change confirmation (PDCC event), price tends to
+# overshoot in the same direction by approximately the same threshold.
+#
+# Entry rules:
+#   PDCC_Down (downward confirmation) → SHORT
+#   PDCC2_UP  (upward confirmation)   → LONG
+#
+# Risk management uses "greedy trailing":
+#   - When in loss: SL and TP remain at initial levels
+#   - When in profit: SL ratchets toward profit (locks in gains),
+#     TP pushes further in profit direction (lets winners run)
+
+name: "btc_dc_overshoot"
+active: true
+
+exchange:
+  type: "hyperliquid"
+  testnet: true
+  leverage: 3
+  leverage_mode: "cross"
+
+account:
+  max_allocation_pct: 5.0
+
+strategy:
+  type: "dc_overshoot"
+  symbol: "BTC"
+
+  # DC detector threshold (0.1% = 0.001)
+  dc_thresholds:
+    - [0.001, 0.001]
+
+  # Position sizing
+  position_size_usd: 50.0
+  max_position_size_usd: 200.0
+
+  # Trailing risk management
+  initial_stop_loss_pct: 0.003    # 0.3% from entry
+  initial_take_profit_pct: 0.002  # 0.2% from entry (~2x threshold)
+  trail_pct: 0.5                  # Lock in 50% of profit as new SL floor
+
+  # Timing
+  cooldown_seconds: 10            # Min seconds between entries
+  max_open_positions: 1
+
+  # Logging
+  log_events: true
+
+risk_management:
+  # Engine-level TP/SL disabled — managed by strategy's TrailingRiskManager
+  stop_loss_enabled: false
+  take_profit_enabled: false
+  # Account-level circuit breaker
+  max_drawdown_pct: 10.0
+  max_position_size_pct: 20.0
+
+monitoring:
+  log_level: "INFO"
