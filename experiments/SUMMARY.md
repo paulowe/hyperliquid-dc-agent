@@ -4,22 +4,23 @@
 Do Directional Change (DC) features improve BTC-USD price forecasting accuracy?
 
 ## Answer
-**Yes, conditionally.** Single-threshold DC features (threshold=0.001) improve forecasting when combined with an information bottleneck (dim=128). Best result: Single-DC R²=0.874 vs Baseline R²=0.871 (exp 005). Multi-threshold DC features consistently add noise regardless of capacity control.
+**Yes, but only at medium-term prediction horizons.** Single-threshold DC features (threshold=0.001) improve forecasting when combined with an information bottleneck (dim=128) at shift=50 (R²=0.874 vs 0.871). At shorter horizons (shift=10), DC features hurt performance (R²=0.842 vs 0.897). Multi-threshold DC features consistently add noise regardless of configuration.
 
 ## Experiment Matrix
 
-| Exp | Data | Bottleneck | Dropout | L2 | Epochs | Baseline R² | Single-DC R² | Multi-DC R² | Key Finding |
-|-----|------|:----------:|:-------:|:--:|:------:|:-----------:|:------------:|:-----------:|-------------|
-| 001 | 7 days (422K) | 0 | 0 | 0 | 5 | **0.545** | 0.095 | -5.774 | Baseline wins; DC arms overfit |
-| 002 | 3 months (4.1M) | 32 | 0.3 | 1e-4 | 20 | -57.3 | -81.7 | -120.9 | Bottleneck(32) destroyed all arms |
-| 003 | 3 months (4.1M) | 0 | 0 | 0 | 20 | **0.845** | 0.665 | -75.4 | More data helps! Baseline excellent |
-| 004 | 3 months (4.1M) | 0 | 0.2 | 0 | 20 | -0.291 | -2.229 | -40.6 | Dropout hurts small networks |
-| 005 | 3 months (4.1M) | 128 | 0 | 0 | 20 | 0.871 | **0.874** | -20.07 | **Single-DC beats baseline!** |
-| 006 | 3 months (4.1M) | 384 | 0 | 0 | 20 | 0.728 | **0.786** | -162.9 | Bigger DC margin but both degrade |
-| 007 | 3 months (4.1M) | 64 | 0 | 0 | 20 | **0.531** | -0.509 | -8.956 | Too tight — destroys all arms |
-| 008 | 3 months (4.1M) | 96 | 0 | 0 | 20 | **0.235** | 0.097 | -8.673 | Non-monotonic valley at 96 |
+| Exp | Shift | Bottleneck | Dropout | L2 | Epochs | Baseline R² | Single-DC R² | Multi-DC R² | Key Finding |
+|-----|:-----:|:----------:|:-------:|:--:|:------:|:-----------:|:------------:|:-----------:|-------------|
+| 001 | 50 | 0 | 0 | 0 | 5 | **0.545** | 0.095 | -5.774 | Baseline wins; DC arms overfit |
+| 002 | 50 | 32 | 0.3 | 1e-4 | 20 | -57.3 | -81.7 | -120.9 | Bottleneck(32) destroyed all arms |
+| 003 | 50 | 0 | 0 | 0 | 20 | **0.845** | 0.665 | -75.4 | More data helps! Baseline excellent |
+| 004 | 50 | 0 | 0.2 | 0 | 20 | -0.291 | -2.229 | -40.6 | Dropout hurts small networks |
+| 005 | 50 | 128 | 0 | 0 | 20 | 0.871 | **0.874** | -20.07 | **Single-DC beats baseline!** |
+| 006 | 50 | 384 | 0 | 0 | 20 | 0.728 | **0.786** | -162.9 | Bigger DC margin but both degrade |
+| 007 | 50 | 64 | 0 | 0 | 20 | **0.531** | -0.509 | -8.956 | Too tight — destroys all arms |
+| 008 | 50 | 96 | 0 | 0 | 20 | **0.235** | 0.097 | -8.673 | Non-monotonic valley at 96 |
+| 009 | 10 | 128 | 0 | 0 | 20 | **0.897** | 0.842 | -0.960 | Shorter horizon easier but DC hurts |
 
-## Bottleneck Sweep (Complete — 6 values tested)
+## Phase 1: Bottleneck Sweep (Complete — 6 values tested)
 
 | Bottleneck | Baseline R² | Single-DC R² | Delta (DC-BL) | Best Overall |
 |:----------:|:-----------:|:------------:|:-------------:|:------------:|
@@ -30,28 +31,34 @@ Do Directional Change (DC) features improve BTC-USD price forecasting accuracy?
 | **128 (exp 005)** | **0.871** | **0.874** | **+0.003** | **Single-DC (optimal)** |
 | 384 (exp 006) | 0.728 | 0.786 | +0.058 | Single-DC (degraded) |
 
+## Phase 2: Prediction Horizon Sweep (In Progress)
+
+| Shift | Baseline R² | Single-DC R² | Delta (DC-BL) | Best |
+|:-----:|:-----------:|:------------:|:-------------:|:----:|
+| 10 (exp 009) | **0.897** | 0.842 | -0.055 | Baseline |
+| 50 (exp 005) | 0.871 | **0.874** | +0.003 | Single-DC |
+
+**Finding: DC features are horizon-dependent.** They help at shift=50 but hurt at shift=10. DC regime events (threshold=0.001 = 0.1% price change) occur over many ticks. At short horizons, regime info is stale noise; at medium horizons, it provides useful context.
+
+**Caveat: R² at short horizons may be inflated** by autocorrelation (target at tick[60] highly correlated with input at tick[49]).
+
 ## Key Insights
 
-1. **Bottleneck=128 is definitively optimal**: Best absolute R² for both baseline (0.871) and single-DC (0.874)
+1. **Bottleneck=128 is definitively optimal**: Best absolute R² for both baseline (0.871) and single-DC (0.874) at shift=50
 2. **Single-DC beats baseline ONLY with bottleneck**: At bottleneck 128 and 384 DC wins; at 0 and 64 baseline wins
 3. **DC features require information bottleneck to be useful**: Without compression, they add noise; with too much compression, they lose signal
-4. **Multi-DC CONCLUSIVELY fails**: Tested at 0%, 57%, 72%, 90%, 95% compression — always catastrophic
+4. **Multi-DC CONCLUSIVELY fails**: Tested at 7 different configurations — always catastrophic
 5. **More data dramatically helps**: R² 0.545 (7 days) → 0.845 (3 months)
 6. **Dropout doesn't work for small dense networks**: Even 0.2 destroys performance
-7. **KFP caching pitfall**: Stale `load-dataset-to-bigquery` task from cached pipeline definitions causes pipeline-level FAILED status even when compare-forecasts succeeds
-8. **Directional accuracy is uninformative**: All arms score ~47.7% (random). The metric uses `np.sign(np.diff(y_true))` on consecutive windowed samples (stride=1), which measures tick-by-tick direction — too noisy to capture. High R² on PRICE_std means the model tracks price *level* well, not price *direction*. For trading utility, we need either: (a) a different target variable (returns), or (b) a metric that compares predicted vs actual price relative to current price
-
-## Open Questions (Phase 2: Prediction Horizon)
-
-1. **Does prediction horizon (shift) affect R² or DC feature value?** Testing shift=10 in exp 009
-2. **What shift value is most useful for trading?** Shorter horizons are more actionable but may have less signal
-3. **Do DC regime features interact with prediction timescale?** Regime changes happen at specific timescales
+7. **DC features are horizon-dependent**: Help at shift=50, hurt at shift=10. Regime info operates at a specific timescale
+8. **Shorter horizons inflate R²**: Baseline R²=0.897 at shift=10 vs 0.871 at shift=50, but this partly reflects autocorrelation
+9. **Directional accuracy metric is uninformative**: All arms score ~47-50% (random) using np.diff. Reference_price metric added (locally) to measure UP/DOWN vs current price — will be deployed in exp 010+
 
 ## Architecture
 ```
 Model: Flatten -> Dense(128, relu) [bottleneck] -> Dense(64, relu) -> Dense(32, relu) -> Dense(1)
 Target: PRICE_std (standardized BTC-USD price)
-Window: input_width=50, shift=50, label_width=1
+Window: input_width=50, shift=variable, label_width=1
 Split: 70/20/10 train/val/test
 ```
 
