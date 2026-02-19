@@ -112,7 +112,7 @@ def ablation_pipeline(
         ],
         distribute_strategy="single",
         patience=5,
-        # exp 012: re-run exp 005 config with seed=42 for reproducibility verification
+        # exp 013: full TF determinism (enable_op_determinism + explicit shuffle seed)
         bottleneck_dim=128,
         dropout_rate=0.0,
         l2_reg=0.0,

@@ -663,10 +663,10 @@ def main():
     # Set random seeds for reproducibility
     # ============================================================
     seed = int(hparams.get("random_seed", 42))
-    random.seed(seed)
-    np.random.seed(seed)
-    tf.random.set_seed(seed)
-    logging.info(f"Random seed set to {seed}")
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    tf.keras.utils.set_random_seed(seed)  # sets Python, NumPy, and TF seeds
+    tf.config.experimental.enable_op_determinism()  # force deterministic TF ops
+    logging.info(f"Random seed set to {seed}, op determinism enabled")
 
     # ============================================================
     # Enable JIT + mixed precision (GPU only)
@@ -791,8 +791,9 @@ def main():
         n_outputs   = n_labels * label_width   # total scalars
 
         # For VAE reconstruction training, we only need X (drop Y)
+        shuffle_seed = int(hparams.get("random_seed", 42))
         train_ds = (train_xy
-            .shuffle(10000, reshuffle_each_iteration=True)
+            .shuffle(10000, seed=shuffle_seed, reshuffle_each_iteration=True)
             .batch(hparams["batch_size"], drop_remainder=True)
             .prefetch(tf.data.AUTOTUNE))
 
