@@ -236,3 +236,97 @@ class TestFullCycle:
         status = strategy.get_status()
         assert status["trade_count"] >= 1
         assert status["trailing_rm"]["has_position"] is False
+
+
+class TestReversalOnOpposingPDCC:
+    """Opposing PDCC while position open → CLOSE + reverse entry."""
+
+    def test_short_reversed_to_long_on_pdcc2_up(self):
+        """SHORT open → PDCC2_UP → CLOSE short + BUY (new LONG)."""
+        strategy = DCOvershootStrategy(make_config())
+        strategy.start()
+
+        # Open SHORT
+        signal, entry_price, ts = trigger_pdcc_down(strategy)
+        strategy.on_trade_executed(signal, entry_price, signal.size)
+        assert strategy._trailing_rm.side == "SHORT"
+
+        # Drive price up to trigger PDCC2_UP (opposing event)
+        price = entry_price
+        all_signals = []
+        for _ in range(30):
+            price *= 1.00015
+            ts += 1.0
+            sigs = strategy.generate_signals(md(price, ts), [], 100_000.0)
+            all_signals.extend(sigs)
+
+        # Should have reversal CLOSE + BUY
+        close_sigs = [s for s in all_signals if s.signal_type == SignalType.CLOSE
+                      and "reversal" in s.reason]
+        buy_sigs = [s for s in all_signals if s.signal_type == SignalType.BUY]
+        assert len(close_sigs) >= 1, "Reversal CLOSE expected"
+        assert len(buy_sigs) >= 1, "BUY entry expected after reversal"
+
+    def test_long_reversed_to_short_on_pdcc_down(self):
+        """LONG open → PDCC_Down → CLOSE long + SELL (new SHORT)."""
+        strategy = DCOvershootStrategy(make_config())
+        strategy.start()
+
+        # Open LONG
+        signal, entry_price, ts = trigger_pdcc2_up(strategy)
+        strategy.on_trade_executed(signal, entry_price, signal.size)
+        assert strategy._trailing_rm.side == "LONG"
+
+        # Drive price down to trigger PDCC_Down (opposing event)
+        price = entry_price
+        all_signals = []
+        for _ in range(30):
+            price *= 0.99985
+            ts += 1.0
+            sigs = strategy.generate_signals(md(price, ts), [], 100_000.0)
+            all_signals.extend(sigs)
+
+        # Should have reversal CLOSE + SELL
+        close_sigs = [s for s in all_signals if s.signal_type == SignalType.CLOSE
+                      and "reversal" in s.reason]
+        sell_sigs = [s for s in all_signals if s.signal_type == SignalType.SELL]
+        assert len(close_sigs) >= 1, "Reversal CLOSE expected"
+        assert len(sell_sigs) >= 1, "SELL entry expected after reversal"
+
+    def test_reversal_then_trailing_on_new_position(self):
+        """After reversal, trailing RM should track the new position correctly."""
+        strategy = DCOvershootStrategy(make_config())
+        strategy.start()
+
+        # Open SHORT
+        signal, entry_price, ts = trigger_pdcc_down(strategy)
+        strategy.on_trade_executed(signal, entry_price, signal.size)
+
+        # Reverse to LONG via PDCC2_UP
+        price = entry_price
+        buy_signal = None
+        for _ in range(30):
+            price *= 1.00015
+            ts += 1.0
+            sigs = strategy.generate_signals(md(price, ts), [], 100_000.0)
+            buys = [s for s in sigs if s.signal_type == SignalType.BUY]
+            if buys:
+                buy_signal = buys[0]
+                break
+
+        assert buy_signal is not None, "Should get BUY signal on reversal"
+
+        # Execute the BUY → trailing RM should now be LONG
+        strategy.on_trade_executed(buy_signal, price, buy_signal.size)
+        assert strategy._trailing_rm.side == "LONG"
+
+        # Now the LONG's SL should be below current price
+        sl = strategy._trailing_rm.current_sl_price
+        assert sl < price, "LONG SL should be below entry"
+
+        # Hit the LONG's SL → should get CLOSE
+        ts += 1.0
+        sigs = strategy.generate_signals(md(sl - 1.0, ts), [], 100_000.0)
+        close_sigs = [s for s in sigs if s.signal_type == SignalType.CLOSE]
+        assert len(close_sigs) == 1
+        assert "stop_loss" in close_sigs[0].reason

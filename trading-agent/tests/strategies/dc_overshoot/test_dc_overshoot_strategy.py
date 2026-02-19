@@ -165,9 +165,10 @@ class TestCooldownEnforcement:
 
 
 class TestPositionGating:
-    """No new entry when a position is already open."""
+    """Same-direction PDCC is blocked; opposing PDCC triggers reversal."""
 
-    def test_no_entry_when_position_open(self):
+    def test_same_direction_blocked_short(self):
+        """SHORT open + continued drops (same-direction PDCC_Down) → no new entry."""
         strategy = DCOvershootStrategy(make_config())
         strategy.start()
 
@@ -176,20 +177,101 @@ class TestPositionGating:
         sell_signals = [s for s in signals1 if s.signal_type == SignalType.SELL]
         assert len(sell_signals) >= 1
 
-        # Execute the trade → position is now open
+        # Execute the trade → SHORT position open
         strategy.on_trade_executed(sell_signals[0], price, sell_signals[0].size)
 
-        # Continue feeding ticks — should not get new entry signals
+        # Continue feeding drops — same direction, should not get new SELL
         entry_signals = []
         for i in range(30):
             price *= 0.99985
             ts += 1.0
             md = make_market_data(price, ts)
             sigs = strategy.generate_signals(md, [], 100_000.0)
-            entries = [s for s in sigs if s.signal_type in (SignalType.BUY, SignalType.SELL)]
+            entries = [s for s in sigs if s.signal_type == SignalType.SELL]
             entry_signals.extend(entries)
 
-        assert len(entry_signals) == 0, "No new entries when position is open"
+        assert len(entry_signals) == 0, "Same-direction PDCC should be blocked"
+
+    def test_opposing_pdcc_triggers_reversal_short_to_long(self):
+        """SHORT open + PDCC2_UP → CLOSE + BUY (reverse to long)."""
+        strategy = DCOvershootStrategy(make_config())
+        strategy.start()
+
+        # Step 1: Drive price down → PDCC_Down → SELL
+        signals1, price, ts = drive_price_down(strategy, steps=20)
+        sell_signals = [s for s in signals1 if s.signal_type == SignalType.SELL]
+        assert len(sell_signals) >= 1
+        strategy.on_trade_executed(sell_signals[0], price, sell_signals[0].size)
+        assert strategy._trailing_rm.side == "SHORT"
+
+        # Step 2: Reverse price upward to trigger PDCC2_UP
+        all_signals = []
+        for _ in range(30):
+            price *= 1.00015
+            ts += 1.0
+            md = make_market_data(price, ts)
+            sigs = strategy.generate_signals(md, [], 100_000.0)
+            all_signals.extend(sigs)
+
+        # Should have CLOSE (reversal) + BUY (new entry)
+        close_signals = [s for s in all_signals if s.signal_type == SignalType.CLOSE]
+        buy_signals = [s for s in all_signals if s.signal_type == SignalType.BUY]
+        assert len(close_signals) >= 1, "Should CLOSE short on opposing PDCC2_UP"
+        assert "reversal" in close_signals[0].reason
+        assert len(buy_signals) >= 1, "Should BUY after closing short"
+
+    def test_opposing_pdcc_triggers_reversal_long_to_short(self):
+        """LONG open + PDCC_Down → CLOSE + SELL (reverse to short)."""
+        strategy = DCOvershootStrategy(make_config())
+        strategy.start()
+
+        # Step 1: Drive price down then up → PDCC2_UP → BUY
+        signals1, price, ts = drive_price_up(strategy, steps=20)
+        buy_signals = [s for s in signals1 if s.signal_type == SignalType.BUY]
+        assert len(buy_signals) >= 1
+        strategy.on_trade_executed(buy_signals[0], price, buy_signals[0].size)
+        assert strategy._trailing_rm.side == "LONG"
+
+        # Step 2: Drive price down to trigger PDCC_Down
+        all_signals = []
+        for _ in range(30):
+            price *= 0.99985
+            ts += 1.0
+            md = make_market_data(price, ts)
+            sigs = strategy.generate_signals(md, [], 100_000.0)
+            all_signals.extend(sigs)
+
+        # Should have CLOSE (reversal) + SELL (new entry)
+        close_signals = [s for s in all_signals if s.signal_type == SignalType.CLOSE]
+        sell_signals = [s for s in all_signals if s.signal_type == SignalType.SELL]
+        assert len(close_signals) >= 1, "Should CLOSE long on opposing PDCC_Down"
+        assert "reversal" in close_signals[0].reason
+        assert len(sell_signals) >= 1, "Should SELL after closing long"
+
+    def test_reversal_close_signal_has_metadata(self):
+        """Reversal CLOSE signal should have reversal metadata."""
+        strategy = DCOvershootStrategy(make_config())
+        strategy.start()
+
+        # Open SHORT
+        signals1, price, ts = drive_price_down(strategy, steps=20)
+        sell_signals = [s for s in signals1 if s.signal_type == SignalType.SELL]
+        strategy.on_trade_executed(sell_signals[0], price, sell_signals[0].size)
+
+        # Reverse to trigger PDCC2_UP
+        all_signals = []
+        for _ in range(30):
+            price *= 1.00015
+            ts += 1.0
+            md = make_market_data(price, ts)
+            sigs = strategy.generate_signals(md, [], 100_000.0)
+            all_signals.extend(sigs)
+
+        close_signals = [s for s in all_signals if s.signal_type == SignalType.CLOSE]
+        assert len(close_signals) >= 1
+        # Reversal close should have metadata indicating it's a reversal
+        assert close_signals[0].metadata.get("reversal") is True
+        assert close_signals[0].metadata.get("previous_side") == "SHORT"
 
 
 class TestPositionSizing:

@@ -104,12 +104,35 @@ class DCOvershootStrategy(TradingStrategy):
             if event_type not in ("PDCC_Down", "PDCC2_UP"):
                 continue
 
-            # Gate: no entry if position already open
+            # Determine direction of this event
+            new_side = "SHORT" if event_type == "PDCC_Down" else "LONG"
+
+            # Gate: position already open
             if self._trailing_rm.has_position:
-                logger.debug(
-                    "DC Overshoot: skipping %s — position already open", event_type
+                current_side = self._trailing_rm.side
+
+                # Same direction → skip (already aligned)
+                if current_side == new_side:
+                    logger.debug(
+                        "DC Overshoot: skipping %s — already %s",
+                        event_type, current_side,
+                    )
+                    continue
+
+                # Opposing direction → close current position and reverse
+                logger.info(
+                    "DC Overshoot REVERSAL: %s while %s — closing and reversing",
+                    event_type, current_side,
                 )
-                continue
+                close_signal = TradingSignal(
+                    signal_type=SignalType.CLOSE,
+                    asset=self._cfg.symbol,
+                    size=self._trailing_rm.size,
+                    reason=f"dc_overshoot_reversal: {event_type} while {current_side}",
+                    metadata={"reversal": True, "previous_side": current_side},
+                )
+                signals.append(close_signal)
+                self._trailing_rm.close_position()
 
             # Gate: cooldown
             if ts - self._last_entry_time < self._cfg.cooldown_seconds:
