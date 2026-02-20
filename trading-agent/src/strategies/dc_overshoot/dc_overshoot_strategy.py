@@ -108,6 +108,9 @@ class DCOvershootStrategy(TradingStrategy):
             new_side = "SHORT" if event_type == "PDCC_Down" else "LONG"
 
             # Gate: position already open
+            is_reversal = False
+            old_size = 0.0
+            previous_side = None
             if self._trailing_rm.has_position:
                 current_side = self._trailing_rm.side
 
@@ -119,23 +122,18 @@ class DCOvershootStrategy(TradingStrategy):
                     )
                     continue
 
-                # Opposing direction → close current position and reverse
+                # Opposing direction → atomic flip (single 2x order)
                 logger.info(
-                    "DC Overshoot REVERSAL: %s while %s — closing and reversing",
+                    "DC Overshoot REVERSAL: %s while %s — atomic flip",
                     event_type, current_side,
                 )
-                close_signal = TradingSignal(
-                    signal_type=SignalType.CLOSE,
-                    asset=self._cfg.symbol,
-                    size=self._trailing_rm.size,
-                    reason=f"dc_overshoot_reversal: {event_type} while {current_side}",
-                    metadata={"reversal": True, "previous_side": current_side},
-                )
-                signals.append(close_signal)
+                is_reversal = True
+                old_size = self._trailing_rm.size
+                previous_side = current_side
                 self._trailing_rm.close_position()
 
-            # Gate: cooldown
-            if ts - self._last_entry_time < self._cfg.cooldown_seconds:
+            # Gate: cooldown (skip on reversals — the signal is urgent)
+            if not is_reversal and ts - self._last_entry_time < self._cfg.cooldown_seconds:
                 logger.debug(
                     "DC Overshoot: skipping %s — cooldown (%.1fs remaining)",
                     event_type,
@@ -143,28 +141,38 @@ class DCOvershootStrategy(TradingStrategy):
                 )
                 continue
 
-            # Generate entry signal
-            size = self._cfg.position_size_usd / price
+            # Calculate new entry size
+            new_entry_size = self._cfg.position_size_usd / price
+            # For reversals: total order = close old + open new (atomic flip)
+            order_size = (old_size + new_entry_size) if is_reversal else new_entry_size
+
+            metadata = {"dc_event": event}
+            if is_reversal:
+                metadata["reversal"] = True
+                metadata["previous_side"] = previous_side
+                metadata["new_position_size"] = new_entry_size
+
             if event_type == "PDCC_Down":
                 signal = TradingSignal(
                     signal_type=SignalType.SELL,
                     asset=self._cfg.symbol,
-                    size=size,
+                    size=order_size,
                     reason=f"dc_overshoot_short: {event_type}",
-                    metadata={"dc_event": event},
+                    metadata=metadata,
                 )
             else:  # PDCC2_UP
                 signal = TradingSignal(
                     signal_type=SignalType.BUY,
                     asset=self._cfg.symbol,
-                    size=size,
+                    size=order_size,
                     reason=f"dc_overshoot_long: {event_type}",
-                    metadata={"dc_event": event},
+                    metadata=metadata,
                 )
 
             logger.info(
-                "DC Overshoot ENTRY: %s %.6f %s @ %.2f | event=%s",
-                signal.signal_type.value, size, self._cfg.symbol, price, event_type,
+                "DC Overshoot ENTRY: %s %.6f %s @ %.2f | event=%s%s",
+                signal.signal_type.value, order_size, self._cfg.symbol, price, event_type,
+                " (reversal)" if is_reversal else "",
             )
             signals.append(signal)
             self._last_entry_time = ts
@@ -189,14 +197,19 @@ class DCOvershootStrategy(TradingStrategy):
             # CLOSE signal — position was exited, nothing to initialize
             return
 
+        # For reversals, the order size is 2x (close + open). The actual
+        # new position is stored in metadata["new_position_size"].
+        actual_size = signal.metadata.get("new_position_size", executed_size)
+
         logger.info(
-            "DC Overshoot FILL: %s %.6f %s @ %.2f",
-            side, executed_size, self._cfg.symbol, executed_price,
+            "DC Overshoot FILL: %s %.6f %s @ %.2f%s",
+            side, actual_size, self._cfg.symbol, executed_price,
+            " (reversal)" if signal.metadata.get("reversal") else "",
         )
 
-        # Initialize trailing RM with actual fill price
+        # Initialize trailing RM with actual fill price and correct size
         if not self._trailing_rm.has_position:
-            self._trailing_rm.open_position(side, executed_price, executed_size)
+            self._trailing_rm.open_position(side, executed_price, actual_size)
 
     def get_status(self) -> Dict[str, Any]:
         """Return strategy state for monitoring."""

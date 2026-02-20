@@ -193,7 +193,7 @@ class TestPositionGating:
         assert len(entry_signals) == 0, "Same-direction PDCC should be blocked"
 
     def test_opposing_pdcc_triggers_reversal_short_to_long(self):
-        """SHORT open + PDCC2_UP → CLOSE + BUY (reverse to long)."""
+        """SHORT open + PDCC2_UP → single BUY with 2x size (atomic flip)."""
         strategy = DCOvershootStrategy(make_config())
         strategy.start()
 
@@ -201,7 +201,8 @@ class TestPositionGating:
         signals1, price, ts = drive_price_down(strategy, steps=20)
         sell_signals = [s for s in signals1 if s.signal_type == SignalType.SELL]
         assert len(sell_signals) >= 1
-        strategy.on_trade_executed(sell_signals[0], price, sell_signals[0].size)
+        old_size = sell_signals[0].size
+        strategy.on_trade_executed(sell_signals[0], price, old_size)
         assert strategy._trailing_rm.side == "SHORT"
 
         # Step 2: Reverse price upward to trigger PDCC2_UP
@@ -213,15 +214,19 @@ class TestPositionGating:
             sigs = strategy.generate_signals(md, [], 100_000.0)
             all_signals.extend(sigs)
 
-        # Should have CLOSE (reversal) + BUY (new entry)
+        # Should have single BUY (no separate CLOSE)
         close_signals = [s for s in all_signals if s.signal_type == SignalType.CLOSE]
         buy_signals = [s for s in all_signals if s.signal_type == SignalType.BUY]
-        assert len(close_signals) >= 1, "Should CLOSE short on opposing PDCC2_UP"
-        assert "reversal" in close_signals[0].reason
-        assert len(buy_signals) >= 1, "Should BUY after closing short"
+        assert len(close_signals) == 0, "Reversal should NOT emit separate CLOSE"
+        assert len(buy_signals) >= 1, "Should BUY to atomically flip"
+
+        # BUY size = old position + new entry (2x for atomic flip)
+        buy = buy_signals[0]
+        new_entry_size = 50.0 / price  # position_size_usd / current price
+        assert buy.size == pytest.approx(old_size + new_entry_size, rel=0.05)
 
     def test_opposing_pdcc_triggers_reversal_long_to_short(self):
-        """LONG open + PDCC_Down → CLOSE + SELL (reverse to short)."""
+        """LONG open + PDCC_Down → single SELL with 2x size (atomic flip)."""
         strategy = DCOvershootStrategy(make_config())
         strategy.start()
 
@@ -229,7 +234,8 @@ class TestPositionGating:
         signals1, price, ts = drive_price_up(strategy, steps=20)
         buy_signals = [s for s in signals1 if s.signal_type == SignalType.BUY]
         assert len(buy_signals) >= 1
-        strategy.on_trade_executed(buy_signals[0], price, buy_signals[0].size)
+        old_size = buy_signals[0].size
+        strategy.on_trade_executed(buy_signals[0], price, old_size)
         assert strategy._trailing_rm.side == "LONG"
 
         # Step 2: Drive price down to trigger PDCC_Down
@@ -241,22 +247,27 @@ class TestPositionGating:
             sigs = strategy.generate_signals(md, [], 100_000.0)
             all_signals.extend(sigs)
 
-        # Should have CLOSE (reversal) + SELL (new entry)
+        # Should have single SELL (no separate CLOSE)
         close_signals = [s for s in all_signals if s.signal_type == SignalType.CLOSE]
         sell_signals = [s for s in all_signals if s.signal_type == SignalType.SELL]
-        assert len(close_signals) >= 1, "Should CLOSE long on opposing PDCC_Down"
-        assert "reversal" in close_signals[0].reason
-        assert len(sell_signals) >= 1, "Should SELL after closing long"
+        assert len(close_signals) == 0, "Reversal should NOT emit separate CLOSE"
+        assert len(sell_signals) >= 1, "Should SELL to atomically flip"
 
-    def test_reversal_close_signal_has_metadata(self):
-        """Reversal CLOSE signal should have reversal metadata."""
+        # SELL size = old position + new entry
+        sell = sell_signals[0]
+        new_entry_size = 50.0 / price
+        assert sell.size == pytest.approx(old_size + new_entry_size, rel=0.05)
+
+    def test_reversal_signal_has_metadata(self):
+        """Reversal BUY/SELL signal should have reversal metadata with new_position_size."""
         strategy = DCOvershootStrategy(make_config())
         strategy.start()
 
         # Open SHORT
         signals1, price, ts = drive_price_down(strategy, steps=20)
         sell_signals = [s for s in signals1 if s.signal_type == SignalType.SELL]
-        strategy.on_trade_executed(sell_signals[0], price, sell_signals[0].size)
+        old_size = sell_signals[0].size
+        strategy.on_trade_executed(sell_signals[0], price, old_size)
 
         # Reverse to trigger PDCC2_UP
         all_signals = []
@@ -267,11 +278,15 @@ class TestPositionGating:
             sigs = strategy.generate_signals(md, [], 100_000.0)
             all_signals.extend(sigs)
 
-        close_signals = [s for s in all_signals if s.signal_type == SignalType.CLOSE]
-        assert len(close_signals) >= 1
-        # Reversal close should have metadata indicating it's a reversal
-        assert close_signals[0].metadata.get("reversal") is True
-        assert close_signals[0].metadata.get("previous_side") == "SHORT"
+        buy_signals = [s for s in all_signals if s.signal_type == SignalType.BUY]
+        assert len(buy_signals) >= 1
+        buy = buy_signals[0]
+        # Reversal signal should have metadata
+        assert buy.metadata.get("reversal") is True
+        assert buy.metadata.get("previous_side") == "SHORT"
+        # new_position_size should be the actual position (not the 2x order size)
+        new_entry_size = 50.0 / price
+        assert buy.metadata.get("new_position_size") == pytest.approx(new_entry_size, rel=0.05)
 
 
 class TestPositionSizing:

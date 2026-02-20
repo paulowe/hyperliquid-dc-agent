@@ -239,10 +239,10 @@ class TestFullCycle:
 
 
 class TestReversalOnOpposingPDCC:
-    """Opposing PDCC while position open → CLOSE + reverse entry."""
+    """Opposing PDCC while position open → atomic flip via single 2x order."""
 
     def test_short_reversed_to_long_on_pdcc2_up(self):
-        """SHORT open → PDCC2_UP → CLOSE short + BUY (new LONG)."""
+        """SHORT open → PDCC2_UP → single BUY (2x size, atomic flip)."""
         strategy = DCOvershootStrategy(make_config())
         strategy.start()
 
@@ -260,15 +260,16 @@ class TestReversalOnOpposingPDCC:
             sigs = strategy.generate_signals(md(price, ts), [], 100_000.0)
             all_signals.extend(sigs)
 
-        # Should have reversal CLOSE + BUY
+        # Should have single BUY with reversal metadata (no CLOSE)
         close_sigs = [s for s in all_signals if s.signal_type == SignalType.CLOSE
-                      and "reversal" in s.reason]
+                      and s.metadata.get("reversal")]
         buy_sigs = [s for s in all_signals if s.signal_type == SignalType.BUY]
-        assert len(close_sigs) >= 1, "Reversal CLOSE expected"
-        assert len(buy_sigs) >= 1, "BUY entry expected after reversal"
+        assert len(close_sigs) == 0, "Reversal should NOT emit separate CLOSE"
+        assert len(buy_sigs) >= 1, "BUY entry expected for atomic flip"
+        assert buy_sigs[0].metadata.get("reversal") is True
 
     def test_long_reversed_to_short_on_pdcc_down(self):
-        """LONG open → PDCC_Down → CLOSE long + SELL (new SHORT)."""
+        """LONG open → PDCC_Down → single SELL (2x size, atomic flip)."""
         strategy = DCOvershootStrategy(make_config())
         strategy.start()
 
@@ -286,15 +287,16 @@ class TestReversalOnOpposingPDCC:
             sigs = strategy.generate_signals(md(price, ts), [], 100_000.0)
             all_signals.extend(sigs)
 
-        # Should have reversal CLOSE + SELL
+        # Should have single SELL with reversal metadata (no CLOSE)
         close_sigs = [s for s in all_signals if s.signal_type == SignalType.CLOSE
-                      and "reversal" in s.reason]
+                      and s.metadata.get("reversal")]
         sell_sigs = [s for s in all_signals if s.signal_type == SignalType.SELL]
-        assert len(close_sigs) >= 1, "Reversal CLOSE expected"
-        assert len(sell_sigs) >= 1, "SELL entry expected after reversal"
+        assert len(close_sigs) == 0, "Reversal should NOT emit separate CLOSE"
+        assert len(sell_sigs) >= 1, "SELL entry expected for atomic flip"
+        assert sell_sigs[0].metadata.get("reversal") is True
 
     def test_reversal_then_trailing_on_new_position(self):
-        """After reversal, trailing RM should track the new position correctly."""
+        """After reversal, trailing RM should track the new position size (not 2x)."""
         strategy = DCOvershootStrategy(make_config())
         strategy.start()
 
@@ -316,9 +318,13 @@ class TestReversalOnOpposingPDCC:
 
         assert buy_signal is not None, "Should get BUY signal on reversal"
 
-        # Execute the BUY → trailing RM should now be LONG
-        strategy.on_trade_executed(buy_signal, price, buy_signal.size)
+        # Execute the reversal — use new_position_size (not full 2x order size)
+        new_pos_size = buy_signal.metadata["new_position_size"]
+        strategy.on_trade_executed(buy_signal, price, new_pos_size)
         assert strategy._trailing_rm.side == "LONG"
+
+        # Trailing RM should track new_position_size, not the 2x order size
+        assert strategy._trailing_rm.size == pytest.approx(new_pos_size, rel=0.01)
 
         # Now the LONG's SL should be below current price
         sl = strategy._trailing_rm.current_sl_price

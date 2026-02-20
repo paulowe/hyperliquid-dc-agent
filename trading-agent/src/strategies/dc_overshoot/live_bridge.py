@@ -209,7 +209,7 @@ async def place_backstop_sl(adapter, symbol: str, side: str, entry_price: float,
         rounded_trigger = float(round(trigger_px, 1))
 
         order_type = HLOrderType({"trigger": {
-            "triggerPx": str(rounded_trigger),
+            "triggerPx": rounded_trigger,  # SDK's float_to_wire() expects a float
             "isMarket": True,
             "tpsl": "sl",
         }})
@@ -435,8 +435,15 @@ async def main():
                 )
 
                 if adapter and not args.observe_only:
-                    # Cancel backstop before closing position
-                    if signal.signal_type == SignalType.CLOSE and backstop_oid is not None:
+                    # Cancel backstop before closing or reversing
+                    needs_cancel = (
+                        backstop_oid is not None
+                        and (
+                            signal.signal_type == SignalType.CLOSE
+                            or signal.metadata.get("reversal")
+                        )
+                    )
+                    if needs_cancel:
                         await cancel_backstop_sl(adapter, symbol, backstop_oid)
                         backstop_oid = None
 
@@ -447,9 +454,11 @@ async def main():
                         if signal.signal_type in (SignalType.BUY, SignalType.SELL):
                             strategy.on_trade_executed(signal, price, signal.size)
                             side = "LONG" if signal.signal_type == SignalType.BUY else "SHORT"
+                            # For reversals, backstop uses new position size (not 2x order size)
+                            backstop_size = signal.metadata.get("new_position_size", signal.size)
                             backstop_oid = await place_backstop_sl(
                                 adapter, symbol, side, price,
-                                signal.size, args.backstop_sl_pct,
+                                backstop_size, args.backstop_sl_pct,
                             )
 
             # Status log every 100 ticks
