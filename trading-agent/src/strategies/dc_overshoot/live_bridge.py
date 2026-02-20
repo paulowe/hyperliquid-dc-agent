@@ -274,12 +274,57 @@ async def execute_signal(adapter, signal, current_price: float) -> bool:
     """Execute a trading signal. Returns True if successful."""
     try:
         if signal.signal_type == SignalType.CLOSE:
+            # Close using signal metadata (side/size) directly instead of
+            # adapter.close_position() which relies on unreliable get_positions().
+            from hyperliquid.utils.signing import OrderType as HLOrderType
+
+            pos_side = signal.metadata.get("side", "")
+            close_size = signal.size
             logger.info(
-                "CLOSING position: %s | reason=%s",
-                signal.asset, signal.reason,
+                "CLOSING %s %s %.6f | reason=%s",
+                pos_side, signal.asset, close_size, signal.reason,
             )
-            ok = await adapter.close_position(signal.asset)
-            return ok
+
+            # Close = opposite side of current position
+            if pos_side == "LONG":
+                is_buy = False  # Sell to close long
+            elif pos_side == "SHORT":
+                is_buy = True   # Buy to close short
+            else:
+                # Fallback if metadata missing
+                logger.warning("CLOSE signal missing side metadata, falling back to close_position()")
+                ok = await adapter.close_position(signal.asset)
+                return ok
+
+            # Place reduce-only IOC order directly via exchange SDK
+            rounded_size = float(adapter._round_size(signal.asset, close_size))
+            market_price = await adapter.get_market_price(signal.asset)
+            slippage_price = market_price * (1.01 if is_buy else 0.99)
+            limit_price = float(adapter._round_price(signal.asset, slippage_price, is_buy))
+
+            result = adapter.exchange.order(
+                name=signal.asset,
+                is_buy=is_buy,
+                sz=rounded_size,
+                limit_px=limit_price,
+                order_type=HLOrderType({"limit": {"tif": "Ioc"}}),
+                reduce_only=True,
+            )
+
+            if result and result.get("status") == "ok":
+                statuses = result["response"]["data"]["statuses"]
+                for s in statuses:
+                    if "filled" in s:
+                        logger.info("Close filled: %s", s["filled"])
+                        return True
+                    if "resting" in s:
+                        logger.info("Close order resting: OID=%s", s["resting"]["oid"])
+                        return True
+                logger.warning("Close order status unexpected: %s", statuses)
+                return False
+            else:
+                logger.error("Close order failed: %s", result)
+                return False
 
         elif signal.signal_type in (SignalType.BUY, SignalType.SELL):
             side = OrderSide.BUY if signal.signal_type == SignalType.BUY else OrderSide.SELL
