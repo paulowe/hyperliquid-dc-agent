@@ -130,6 +130,10 @@ def parse_args():
         help="Leverage (default: 3)",
     )
     parser.add_argument(
+        "--min-profit-to-trail-pct", type=float, default=0.001,
+        help="Min raw profit before trailing ratchet activates (default: 0.001 = 0.1%%)",
+    )
+    parser.add_argument(
         "--backstop-sl-pct", type=float, default=0.10,
         help="Hard stop-loss on exchange as crash protection (default: 0.10 = 10%%)",
     )
@@ -337,6 +341,7 @@ async def main():
         "initial_stop_loss_pct": args.sl_pct,
         "initial_take_profit_pct": args.tp_pct,
         "trail_pct": args.trail_pct,
+        "min_profit_to_trail_pct": args.min_profit_to_trail_pct,
         "cooldown_seconds": 10,
         "max_open_positions": 1,
         "log_events": True,
