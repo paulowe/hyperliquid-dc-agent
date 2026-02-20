@@ -40,7 +40,7 @@ sys.path.insert(0, str(_SRC_DIR))
 
 # Load .env from trading-agent/ root
 from dotenv import load_dotenv
-load_dotenv(_SRC_DIR.parent / ".env")
+load_dotenv(_SRC_DIR.parent / ".env", override=True)
 
 from strategies.dc_overshoot.dc_overshoot_strategy import DCOvershootStrategy
 from interfaces.strategy import MarketData, SignalType
@@ -162,11 +162,16 @@ async def create_adapter(network: str, private_key: str, leverage: int, symbol: 
     wallet = Account.from_key(private_key)
     adapter.info = Info(base_url, skip_ws=True)
 
-    if account_address:
+    # Only use delegation if account_address differs from the wallet's own address
+    if account_address and account_address.lower() != wallet.address.lower():
         adapter.exchange = Exchange(wallet, base_url, account_address=account_address)
         logger.info("API wallet %s trading on behalf of %s", wallet.address, account_address)
     else:
         adapter.exchange = Exchange(wallet, base_url)
+        if account_address:
+            logger.info("Wallet %s (no delegation needed)", wallet.address)
+        else:
+            logger.info("Wallet %s", wallet.address)
 
     adapter.is_connected = True
     adapter._build_precision_cache()
@@ -199,9 +204,9 @@ async def place_backstop_sl(adapter, symbol: str, side: str, entry_price: float,
             trigger_px = entry_price * (1 + backstop_pct)
             is_buy = True   # Buy to close short
 
-        # Round size and trigger price using adapter's precision rules
-        rounded_size = adapter._round_size(symbol, size)
-        rounded_trigger = round(trigger_px, 1)  # Price to 1 decimal for BTC-scale assets
+        # Round size and trigger price
+        rounded_size = float(adapter._round_size(symbol, size))
+        rounded_trigger = float(round(trigger_px, 1))
 
         order_type = HLOrderType({"trigger": {
             "triggerPx": str(rounded_trigger),
