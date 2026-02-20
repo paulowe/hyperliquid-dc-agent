@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 # Price data always comes from mainnet (the only active market)
 PRICE_WS_URL = "wss://api.hyperliquid.xyz/ws"
 
-SYMBOL = "BTC"
+DEFAULT_SYMBOL = "BTC"
 
 # Network-specific constants
 NETWORK_CONFIG = {
@@ -92,6 +92,10 @@ def get_network() -> str:
 def parse_args():
     parser = argparse.ArgumentParser(
         description="DC Overshoot: mainnet price data → strategy → trade execution"
+    )
+    parser.add_argument(
+        "--symbol", type=str, default=DEFAULT_SYMBOL,
+        help="Asset to trade (default: BTC). Must match Hyperliquid symbol.",
     )
     parser.add_argument(
         "--duration", type=int, default=30,
@@ -132,7 +136,7 @@ def parse_args():
     return parser.parse_args()
 
 
-async def create_adapter(network: str, private_key: str, leverage: int, account_address: str = ""):
+async def create_adapter(network: str, private_key: str, leverage: int, symbol: str, account_address: str = ""):
     """Create and connect an adapter for the specified network.
 
     If account_address is provided, the API wallet (from private_key) will
@@ -164,9 +168,9 @@ async def create_adapter(network: str, private_key: str, leverage: int, account_
     adapter._build_precision_cache()
 
     # Set leverage for BTC
-    ok = await adapter.set_leverage(SYMBOL, leverage, is_cross=True)
+    ok = await adapter.set_leverage(symbol, leverage, is_cross=True)
     if ok:
-        logger.info("Leverage set to %dx cross for %s", leverage, SYMBOL)
+        logger.info("Leverage set to %dx cross for %s", leverage, symbol)
     else:
         logger.warning("Failed to set leverage — using existing setting")
 
@@ -179,9 +183,9 @@ async def execute_signal(adapter, signal, current_price: float) -> bool:
         if signal.signal_type == SignalType.CLOSE:
             logger.info(
                 "CLOSING position: %s | reason=%s",
-                SYMBOL, signal.reason,
+                signal.asset, signal.reason,
             )
-            ok = await adapter.close_position(SYMBOL)
+            ok = await adapter.close_position(signal.asset)
             return ok
 
         elif signal.signal_type in (SignalType.BUY, SignalType.SELL):
@@ -215,6 +219,7 @@ async def main():
     args = parse_args()
     network = get_network()
     net_cfg = NETWORK_CONFIG[network]
+    symbol = args.symbol
 
     # Get private key for the selected network
     private_key = os.environ.get(net_cfg["key_env"], "")
@@ -244,7 +249,7 @@ async def main():
 
     # Build strategy config
     config = {
-        "symbol": SYMBOL,
+        "symbol": symbol,
         "dc_thresholds": [[args.threshold, args.threshold]],
         "position_size_usd": args.position_size,
         "max_position_size_usd": args.position_size * 4,
@@ -263,7 +268,7 @@ async def main():
     logger.info("=" * 70)
     logger.info("Price data : mainnet WebSocket (%s)", PRICE_WS_URL)
     logger.info("Trading    : %s", "OBSERVE ONLY" if args.observe_only else net_cfg["label"])
-    logger.info("Symbol     : %s", SYMBOL)
+    logger.info("Symbol     : %s", symbol)
     logger.info("Threshold  : %.4f (%.2f%%)", args.threshold, args.threshold * 100)
     logger.info("Position   : $%.0f USD", args.position_size)
     logger.info("SL/TP      : %.2f%% / %.2f%%", args.sl_pct * 100, args.tp_pct * 100)
@@ -274,7 +279,7 @@ async def main():
     # Connect adapter (unless observe-only)
     adapter = None
     if not args.observe_only:
-        adapter = await create_adapter(network, private_key, args.leverage, account_address)
+        adapter = await create_adapter(network, private_key, args.leverage, symbol, account_address)
 
         # Show starting account value and positions
         query_addr = account_address or adapter.exchange.wallet.address
@@ -298,12 +303,12 @@ async def main():
     start_time = time.time()
     end_time = start_time + args.duration * 60
 
-    logger.info("Connecting to mainnet WebSocket for %s prices...", SYMBOL)
+    logger.info("Connecting to mainnet WebSocket for %s prices...", symbol)
 
     async with websockets.connect(PRICE_WS_URL) as ws:
         subscribe_msg = {"method": "subscribe", "subscription": {"type": "allMids"}}
         await ws.send(json.dumps(subscribe_msg))
-        logger.info("Subscribed to allMids. Waiting for %s ticks...", SYMBOL)
+        logger.info("Subscribed to allMids. Waiting for %s ticks...", symbol)
 
         async for message in ws:
             if time.time() > end_time:
@@ -315,16 +320,16 @@ async def main():
                 continue
 
             mids = data.get("data", {}).get("mids", {})
-            if SYMBOL not in mids:
+            if symbol not in mids:
                 continue
 
-            price = float(mids[SYMBOL])
+            price = float(mids[symbol])
             ts = time.time()
             tick_count += 1
 
             # Feed tick to strategy
             md = MarketData(
-                asset=SYMBOL, price=price, volume_24h=0.0, timestamp=ts,
+                asset=symbol, price=price, volume_24h=0.0, timestamp=ts,
             )
 
             # Get positions for strategy (if adapter available)
@@ -343,7 +348,7 @@ async def main():
                 signal_count += 1
                 logger.info(
                     "*** SIGNAL #%d: %s %s | price=%.2f | reason=%s",
-                    signal_count, signal.signal_type.value, SYMBOL, price, signal.reason,
+                    signal_count, signal.signal_type.value, symbol, price, signal.reason,
                 )
 
                 if adapter and not args.observe_only:
