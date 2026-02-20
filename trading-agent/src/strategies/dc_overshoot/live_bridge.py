@@ -1,21 +1,24 @@
-"""Live bridge: mainnet BTC price data → DCOvershootStrategy → testnet trades.
+"""Live bridge: mainnet BTC price data → DCOvershootStrategy → trades.
 
 Connects to Hyperliquid mainnet WebSocket for real BTC midprice ticks,
-runs the DC Overshoot strategy, and executes trades on testnet.
+runs the DC Overshoot strategy, and executes trades on the configured network.
+
+Network selection is controlled by HYPERLIQUID_NETWORK in .env:
+  - "testnet" → trades on testnet (fake money)
+  - "mainnet" → trades on mainnet (real money, requires confirmation)
 
 Usage:
-    # Set env vars first (or use .env file)
-    export HYPERLIQUID_TESTNET_PRIVATE_KEY=0x...
-
-    # Run the bridge
+    # Configure .env first (set HYPERLIQUID_NETWORK, keys, wallet addresses)
+    # Then run:
     uv run --package hyperliquid-trading-bot python \
         trading-agent/src/strategies/dc_overshoot/live_bridge.py
 
-    # Custom duration (default: 30 minutes)
+    # Custom duration and risk params:
     uv run --package hyperliquid-trading-bot python \
-        trading-agent/src/strategies/dc_overshoot/live_bridge.py --duration 60
+        trading-agent/src/strategies/dc_overshoot/live_bridge.py \
+        --duration 60 --sl-pct 0.10 --tp-pct 0.10
 
-    # Observe only (no trades)
+    # Observe only (no trades):
     uv run --package hyperliquid-trading-bot python \
         trading-agent/src/strategies/dc_overshoot/live_bridge.py --observe-only
 """
@@ -32,7 +35,12 @@ import time
 from pathlib import Path
 
 # Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+_SRC_DIR = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_SRC_DIR))
+
+# Load .env from trading-agent/ root
+from dotenv import load_dotenv
+load_dotenv(_SRC_DIR.parent / ".env")
 
 from strategies.dc_overshoot.dc_overshoot_strategy import DCOvershootStrategy
 from interfaces.strategy import MarketData, SignalType
@@ -50,15 +58,40 @@ for handler in logging.root.handlers:
         handler.stream = sys.stdout
 logger = logging.getLogger(__name__)
 
-# Mainnet WebSocket for price data (active market)
-MAINNET_WS_URL = "wss://api.hyperliquid.xyz/ws"
+# Price data always comes from mainnet (the only active market)
+PRICE_WS_URL = "wss://api.hyperliquid.xyz/ws"
 
 SYMBOL = "BTC"
+
+# Network-specific constants
+NETWORK_CONFIG = {
+    "testnet": {
+        "base_url": "https://api.hyperliquid-testnet.xyz",
+        "key_env": "HYPERLIQUID_TESTNET_PRIVATE_KEY",
+        "wallet_env": "TESTNET_WALLET_ADDRESS",
+        "label": "testnet",
+    },
+    "mainnet": {
+        "base_url": "https://api.hyperliquid.xyz",
+        "key_env": "HYPERLIQUID_MAINNET_PRIVATE_KEY",
+        "wallet_env": "MAINNET_WALLET_ADDRESS",
+        "label": "MAINNET (real money!)",
+    },
+}
+
+
+def get_network() -> str:
+    """Read HYPERLIQUID_NETWORK from env, default to testnet."""
+    network = os.environ.get("HYPERLIQUID_NETWORK", "testnet").lower().strip()
+    if network not in NETWORK_CONFIG:
+        logger.error("HYPERLIQUID_NETWORK must be 'testnet' or 'mainnet', got '%s'", network)
+        sys.exit(1)
+    return network
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="DC Overshoot: mainnet data → testnet trades"
+        description="DC Overshoot: mainnet price data → strategy → trade execution"
     )
     parser.add_argument(
         "--duration", type=int, default=30,
@@ -93,14 +126,14 @@ def parse_args():
         help="Leverage (default: 3)",
     )
     parser.add_argument(
-        "--account-address", type=str, default="",
-        help="Main wallet address if using API wallet delegation",
+        "--yes", action="store_true",
+        help="Skip mainnet confirmation prompt",
     )
     return parser.parse_args()
 
 
-async def create_testnet_adapter(private_key: str, leverage: int, account_address: str = ""):
-    """Create and connect a testnet adapter for placing trades.
+async def create_adapter(network: str, private_key: str, leverage: int, account_address: str = ""):
+    """Create and connect an adapter for the specified network.
 
     If account_address is provided, the API wallet (from private_key) will
     trade on behalf of the main wallet (account_address). This requires
@@ -111,11 +144,14 @@ async def create_testnet_adapter(private_key: str, leverage: int, account_addres
     from hyperliquid.exchange import Exchange
     from eth_account import Account
 
-    adapter = HyperliquidAdapter(private_key=private_key, testnet=True)
+    net_cfg = NETWORK_CONFIG[network]
+    is_testnet = (network == "testnet")
+    base_url = net_cfg["base_url"]
 
-    # Custom connect with account_address support
+    adapter = HyperliquidAdapter(private_key=private_key, testnet=is_testnet)
+
+    # Custom connect with account_address delegation support
     wallet = Account.from_key(private_key)
-    base_url = "https://api.hyperliquid-testnet.xyz"
     adapter.info = Info(base_url, skip_ws=True)
 
     if account_address:
@@ -138,7 +174,7 @@ async def create_testnet_adapter(private_key: str, leverage: int, account_addres
 
 
 async def execute_signal(adapter, signal, current_price: float) -> bool:
-    """Execute a trading signal on testnet. Returns True if successful."""
+    """Execute a trading signal. Returns True if successful."""
     try:
         if signal.signal_type == SignalType.CLOSE:
             logger.info(
@@ -177,15 +213,34 @@ async def main():
     import websockets
 
     args = parse_args()
+    network = get_network()
+    net_cfg = NETWORK_CONFIG[network]
 
-    # Get testnet private key from env
-    private_key = os.environ.get("HYPERLIQUID_TESTNET_PRIVATE_KEY", "")
+    # Get private key for the selected network
+    private_key = os.environ.get(net_cfg["key_env"], "")
     if not private_key and not args.observe_only:
         logger.error(
-            "HYPERLIQUID_TESTNET_PRIVATE_KEY not set. "
-            "Use --observe-only or set the env var."
+            "%s not set. Set it in .env or use --observe-only.",
+            net_cfg["key_env"],
         )
         sys.exit(1)
+
+    # Get wallet address for delegation
+    account_address = os.environ.get(net_cfg["wallet_env"], "")
+
+    # Mainnet safety confirmation
+    if network == "mainnet" and not args.observe_only and not args.yes:
+        print("\n" + "!" * 70)
+        print("  WARNING: You are about to trade on MAINNET with REAL MONEY")
+        print("!" * 70)
+        print(f"  Wallet: {account_address or 'API wallet (no delegation)'}")
+        print(f"  SL: {args.sl_pct*100:.1f}%  TP: {args.tp_pct*100:.1f}%  Size: ${args.position_size}")
+        print()
+        confirm = input("  Type 'yes' to continue: ").strip().lower()
+        if confirm != "yes":
+            print("Aborted.")
+            sys.exit(0)
+        print()
 
     # Build strategy config
     config = {
@@ -206,8 +261,8 @@ async def main():
     logger.info("=" * 70)
     logger.info("DC Overshoot Live Bridge")
     logger.info("=" * 70)
-    logger.info("Price data : mainnet WebSocket (%s)", MAINNET_WS_URL)
-    logger.info("Trading    : %s", "OBSERVE ONLY" if args.observe_only else "testnet")
+    logger.info("Price data : mainnet WebSocket (%s)", PRICE_WS_URL)
+    logger.info("Trading    : %s", "OBSERVE ONLY" if args.observe_only else net_cfg["label"])
     logger.info("Symbol     : %s", SYMBOL)
     logger.info("Threshold  : %.4f (%.2f%%)", args.threshold, args.threshold * 100)
     logger.info("Position   : $%.0f USD", args.position_size)
@@ -216,19 +271,17 @@ async def main():
     logger.info("Duration   : %d minutes", args.duration)
     logger.info("=" * 70)
 
-    # Connect testnet adapter (unless observe-only)
+    # Connect adapter (unless observe-only)
     adapter = None
     if not args.observe_only:
-        account_addr = args.account_address or os.environ.get("TESTNET_WALLET_ADDRESS", "")
-        adapter = await create_testnet_adapter(private_key, args.leverage, account_addr)
+        adapter = await create_adapter(network, private_key, args.leverage, account_address)
 
         # Show starting account value and positions
-        # Use the main wallet address for Info queries when using delegation
-        query_addr = account_addr or adapter.exchange.wallet.address
+        query_addr = account_address or adapter.exchange.wallet.address
         user_state = adapter.info.user_state(query_addr)
         acct_value = float(user_state.get("marginSummary", {}).get("accountValue", 0))
         positions = await adapter.get_positions()
-        logger.info("Testnet account value: $%.2f (wallet: %s)", acct_value, query_addr[:10] + "...")
+        logger.info("Account value: $%.2f (wallet: %s)", acct_value, query_addr[:10] + "...")
         if positions:
             for p in positions:
                 logger.info(
@@ -247,7 +300,7 @@ async def main():
 
     logger.info("Connecting to mainnet WebSocket for %s prices...", SYMBOL)
 
-    async with websockets.connect(MAINNET_WS_URL) as ws:
+    async with websockets.connect(PRICE_WS_URL) as ws:
         subscribe_msg = {"method": "subscribe", "subscription": {"type": "allMids"}}
         await ws.send(json.dumps(subscribe_msg))
         logger.info("Subscribed to allMids. Waiting for %s ticks...", SYMBOL)
@@ -342,10 +395,7 @@ async def main():
 
     if adapter:
         # Show final positions and account value
-        query_addr = (
-            os.environ.get("TESTNET_WALLET_ADDRESS", "")
-            or adapter.exchange.wallet.address
-        )
+        query_addr = account_address or adapter.exchange.wallet.address
         user_state = adapter.info.user_state(query_addr)
         acct_value = float(user_state.get("marginSummary", {}).get("accountValue", 0))
         positions = await adapter.get_positions()
