@@ -212,8 +212,16 @@ async def place_backstop_sl(adapter, symbol: str, side: str, entry_price: float,
         rounded_size = float(adapter._round_size(symbol, size))
         rounded_trigger = float(round(trigger_px, 1))
 
+        # limit_px must be on the "worse" side of triggerPx for SL orders.
+        # LONG SL (sell): limit below trigger for slippage room.
+        # SHORT SL (buy): limit above trigger for slippage room.
+        if is_buy:
+            limit_px = float(round(rounded_trigger * 1.01, 1))  # 1% above trigger
+        else:
+            limit_px = float(round(rounded_trigger * 0.99, 1))  # 1% below trigger
+
         order_type = HLOrderType({"trigger": {
-            "triggerPx": rounded_trigger,  # SDK's float_to_wire() expects a float
+            "triggerPx": rounded_trigger,
             "isMarket": True,
             "tpsl": "sl",
         }})
@@ -222,7 +230,7 @@ async def place_backstop_sl(adapter, symbol: str, side: str, entry_price: float,
             name=symbol,
             is_buy=is_buy,
             sz=rounded_size,
-            limit_px=rounded_trigger,
+            limit_px=limit_px,
             order_type=order_type,
             reduce_only=True,
         )
