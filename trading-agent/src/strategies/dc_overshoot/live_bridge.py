@@ -130,6 +130,10 @@ def parse_args():
         help="Leverage (default: 3)",
     )
     parser.add_argument(
+        "--backstop-sl-pct", type=float, default=0.10,
+        help="Hard stop-loss on exchange as crash protection (default: 0.10 = 10%%)",
+    )
+    parser.add_argument(
         "--yes", action="store_true",
         help="Skip mainnet confirmation prompt",
     )
@@ -175,6 +179,78 @@ async def create_adapter(network: str, private_key: str, leverage: int, symbol: 
         logger.warning("Failed to set leverage — using existing setting")
 
     return adapter
+
+
+async def place_backstop_sl(adapter, symbol: str, side: str, entry_price: float,
+                            size: float, backstop_pct: float) -> int | None:
+    """Place a trigger stop-loss order on the exchange as a crash-protection backstop.
+
+    Returns the order ID (oid) if successful, None otherwise.
+    """
+    from hyperliquid.utils.signing import OrderType as HLOrderType
+
+    try:
+        # For LONG: sell if price drops below backstop level
+        # For SHORT: buy if price rises above backstop level
+        if side == "LONG":
+            trigger_px = entry_price * (1 - backstop_pct)
+            is_buy = False  # Sell to close long
+        else:
+            trigger_px = entry_price * (1 + backstop_pct)
+            is_buy = True   # Buy to close short
+
+        # Round size and trigger price using adapter's precision rules
+        rounded_size = adapter._round_size(symbol, size)
+        rounded_trigger = round(trigger_px, 1)  # Price to 1 decimal for BTC-scale assets
+
+        order_type = HLOrderType({"trigger": {
+            "triggerPx": str(rounded_trigger),
+            "isMarket": True,
+            "tpsl": "sl",
+        }})
+
+        result = adapter.exchange.order(
+            name=symbol,
+            is_buy=is_buy,
+            sz=rounded_size,
+            limit_px=rounded_trigger,
+            order_type=order_type,
+            reduce_only=True,
+        )
+
+        # Extract order ID from response
+        if result.get("status") == "ok":
+            statuses = result["response"]["data"]["statuses"]
+            for s in statuses:
+                if "resting" in s:
+                    oid = s["resting"]["oid"]
+                    logger.info(
+                        "BACKSTOP SL placed: %s %s @ %.2f -> trigger %.2f (%.1f%%) | OID=%s",
+                        side, symbol, entry_price, rounded_trigger, backstop_pct * 100, oid,
+                    )
+                    return oid
+                if "filled" in s:
+                    # Backstop triggered immediately (price already past trigger)
+                    logger.warning("BACKSTOP SL triggered immediately — price already past trigger")
+                    return None
+
+        logger.warning("BACKSTOP SL order response unexpected: %s", result)
+        return None
+
+    except Exception as e:
+        logger.error("Failed to place backstop SL: %s", e)
+        return None
+
+
+async def cancel_backstop_sl(adapter, symbol: str, backstop_oid: int | None) -> None:
+    """Cancel the exchange backstop order when position closes normally."""
+    if backstop_oid is None:
+        return
+    try:
+        result = adapter.exchange.cancel(symbol, backstop_oid)
+        logger.info("BACKSTOP SL cancelled: OID=%s", backstop_oid)
+    except Exception as e:
+        logger.warning("Failed to cancel backstop SL OID=%s: %s", backstop_oid, e)
 
 
 async def execute_signal(adapter, signal, current_price: float) -> bool:
@@ -273,6 +349,7 @@ async def main():
     logger.info("Position   : $%.0f USD", args.position_size)
     logger.info("SL/TP      : %.2f%% / %.2f%%", args.sl_pct * 100, args.tp_pct * 100)
     logger.info("Trail      : %.0f%% lock-in", args.trail_pct * 100)
+    logger.info("Backstop SL: %.1f%% (hard stop on exchange)", args.backstop_sl_pct * 100)
     logger.info("Duration   : %d minutes", args.duration)
     logger.info("=" * 70)
 
@@ -300,6 +377,7 @@ async def main():
     tick_count = 0
     signal_count = 0
     trade_count = 0
+    backstop_oid = None  # Exchange-level backstop stop-loss order ID
     start_time = time.time()
     end_time = start_time + args.duration * 60
 
@@ -352,12 +430,22 @@ async def main():
                 )
 
                 if adapter and not args.observe_only:
+                    # Cancel backstop before closing position
+                    if signal.signal_type == SignalType.CLOSE and backstop_oid is not None:
+                        await cancel_backstop_sl(adapter, symbol, backstop_oid)
+                        backstop_oid = None
+
                     ok = await execute_signal(adapter, signal, price)
                     if ok:
                         trade_count += 1
-                        # Notify strategy of fill
+                        # On entry fill: notify strategy + place backstop
                         if signal.signal_type in (SignalType.BUY, SignalType.SELL):
                             strategy.on_trade_executed(signal, price, signal.size)
+                            side = "LONG" if signal.signal_type == SignalType.BUY else "SHORT"
+                            backstop_oid = await place_backstop_sl(
+                                adapter, symbol, side, price,
+                                signal.size, args.backstop_sl_pct,
+                            )
 
             # Status log every 100 ticks
             if tick_count % 100 == 0:
