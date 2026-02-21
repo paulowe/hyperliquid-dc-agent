@@ -98,8 +98,8 @@ def parse_args():
         help="Asset to trade (default: BTC). Must match Hyperliquid symbol.",
     )
     parser.add_argument(
-        "--duration", type=int, default=30,
-        help="Run duration in minutes (default: 30)",
+        "--duration", type=int, default=0,
+        help="Run duration in minutes (default: 0 = run forever until Ctrl+C)",
     )
     parser.add_argument(
         "--observe-only", action="store_true",
@@ -413,7 +413,7 @@ async def main():
     logger.info("SL/TP      : %.2f%% / %.2f%%", args.sl_pct * 100, args.tp_pct * 100)
     logger.info("Trail      : %.0f%% lock-in", args.trail_pct * 100)
     logger.info("Backstop SL: %.1f%% (hard stop on exchange)", args.backstop_sl_pct * 100)
-    logger.info("Duration   : %d minutes", args.duration)
+    logger.info("Duration   : %s", f"{args.duration} minutes" if args.duration > 0 else "unlimited (Ctrl+C to stop)")
     logger.info("=" * 70)
 
     # Connect adapter (unless observe-only)
@@ -442,7 +442,8 @@ async def main():
     trade_count = 0
     backstop_oid = None  # Exchange-level backstop stop-loss order ID
     start_time = time.time()
-    end_time = start_time + args.duration * 60
+    # duration=0 means run forever
+    end_time = start_time + args.duration * 60 if args.duration > 0 else float("inf")
 
     logger.info("Connecting to mainnet WebSocket for %s prices...", symbol)
 
@@ -537,11 +538,12 @@ async def main():
                         f" | {side} entry={entry:.2f} SL={sl:.2f} TP={tp:.2f} "
                         f"PnL={pnl_pct:+.3f}%"
                     )
+                remaining = f"remaining=%.0fs" % (end_time - ts,) if end_time != float("inf") else "∞"
                 logger.info(
                     "Tick #%d | price=%.2f | signals=%d trades=%d | "
-                    "elapsed=%.0fs remaining=%.0fs%s",
+                    "elapsed=%.0fs %s%s",
                     tick_count, price, signal_count, trade_count,
-                    elapsed, end_time - ts, pos_info,
+                    elapsed, remaining, pos_info,
                 )
 
     # Final summary
