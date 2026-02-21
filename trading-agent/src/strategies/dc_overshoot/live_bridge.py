@@ -278,6 +278,112 @@ async def cancel_backstop_sl(adapter, symbol: str, backstop_oid: int | None) -> 
         logger.warning("Failed to cancel backstop SL OID=%s: %s", backstop_oid, e)
 
 
+async def reconcile_on_reconnect(
+    adapter, strategy, symbol: str, backstop_oid: int | None,
+) -> int | None:
+    """Reconcile strategy state with exchange positions after WS reconnect.
+
+    Handles four scenarios:
+    1. Strategy + exchange both have same position → preserve, update water marks
+    2. Strategy has position, exchange doesn't → backstop SL likely fired, clear state
+    3. Neither has position → no-op
+    4. Strategy has no position, exchange does → external position, log and ignore
+
+    Returns the updated backstop_oid (None if position was cleared).
+    """
+    rm = strategy._trailing_rm
+
+    # Fetch exchange positions via REST (adapter is independent of WS)
+    try:
+        positions = await adapter.get_positions()
+    except Exception as e:
+        logger.warning("Reconciliation failed — could not fetch positions: %s", e)
+        return backstop_oid  # Keep current state, hope next reconnect works
+
+    # Find position for our symbol
+    exchange_pos = None
+    for p in positions:
+        if p.asset == symbol:
+            exchange_pos = p
+            break
+
+    strategy_has_pos = rm.has_position
+    exchange_has_pos = exchange_pos is not None and abs(exchange_pos.size) > 0
+
+    # Scenario 1: Both have position — verify sides match
+    if strategy_has_pos and exchange_has_pos:
+        exchange_side = "LONG" if exchange_pos.size > 0 else "SHORT"
+        if exchange_side == rm.side:
+            # Position survived the outage — update water marks with current price
+            try:
+                current_price = float(await adapter.get_market_price(symbol))
+            except Exception:
+                logger.info(
+                    "Reconciliation: %s position intact (entry=%.2f, size=%.5f). "
+                    "Could not fetch market price for water mark update.",
+                    rm.side, rm.entry_price, rm.size,
+                )
+                return backstop_oid
+
+            # Ratchet water marks in favorable direction only
+            if rm.side == "LONG" and rm._high_water_mark is not None:
+                if current_price > rm._high_water_mark:
+                    rm._high_water_mark = current_price
+                    logger.info(
+                        "Reconciliation: updated LONG high_water_mark to %.2f",
+                        current_price,
+                    )
+            elif rm.side == "SHORT" and rm._low_water_mark is not None:
+                if current_price < rm._low_water_mark:
+                    rm._low_water_mark = current_price
+                    logger.info(
+                        "Reconciliation: updated SHORT low_water_mark to %.2f",
+                        current_price,
+                    )
+
+            logger.info(
+                "Reconciliation: %s position intact (entry=%.2f, size=%.5f)",
+                rm.side, rm.entry_price, rm.size,
+            )
+            return backstop_oid
+        else:
+            # Side mismatch — clear strategy state
+            logger.warning(
+                "Reconciliation: side mismatch! Strategy=%s, Exchange=%s. "
+                "Clearing strategy state.",
+                rm.side, exchange_side,
+            )
+            rm.close_position()
+            return None
+
+    # Scenario 2: Strategy has position, exchange does NOT
+    if strategy_has_pos and not exchange_has_pos:
+        logger.warning(
+            "Reconciliation: strategy had %s position but exchange has none. "
+            "Backstop SL likely fired during outage. Clearing strategy state.",
+            rm.side,
+        )
+        rm.close_position()
+        return None
+
+    # Scenario 3: Neither has position — clean state
+    if not strategy_has_pos and not exchange_has_pos:
+        logger.info("Reconciliation: no position on either side. Clean state.")
+        return backstop_oid
+
+    # Scenario 4: Exchange has position, strategy doesn't — external position
+    if not strategy_has_pos and exchange_has_pos:
+        logger.warning(
+            "Reconciliation: exchange has %s position (size=%.5f) but strategy "
+            "doesn't track it. External position — ignoring.",
+            "LONG" if exchange_pos.size > 0 else "SHORT",
+            exchange_pos.size,
+        )
+        return backstop_oid
+
+    return backstop_oid
+
+
 async def execute_signal(adapter, signal, current_price: float) -> bool:
     """Execute a trading signal. Returns True if successful."""
     try:
@@ -474,118 +580,214 @@ async def main():
 
     logger.info("Connecting to mainnet WebSocket for %s prices...", symbol)
 
-    async with websockets.connect(PRICE_WS_URL) as ws:
-        subscribe_msg = {"method": "subscribe", "subscription": {"type": "allMids"}}
-        await ws.send(json.dumps(subscribe_msg))
-        logger.info("Subscribed to allMids. Waiting for %s ticks...", symbol)
+    # Reconnection state
+    reconnect_count = 0
+    subscribe_msg = json.dumps({"method": "subscribe", "subscription": {"type": "allMids"}})
+    duration_reached = False
 
-        async for message in ws:
-            if time.time() > end_time:
-                logger.info("Duration reached (%d min). Stopping.", args.duration)
-                break
+    # Hyperliquid JSON heartbeat: server drops connections idle for 60s.
+    # Send {"method": "ping"} every 25s as documented by Hyperliquid.
+    # The websockets library's frame-level ping_interval additionally provides
+    # client-side staleness detection (raises ConnectionClosedError on timeout).
+    HL_PING_INTERVAL = 25  # seconds, must be < 60s server idle timeout
 
-            data = json.loads(message)
-            if data.get("channel") != "allMids":
-                continue
+    async def hl_heartbeat(ws_conn):
+        """Send Hyperliquid JSON pings to prevent server-side idle timeout."""
+        try:
+            while True:
+                await asyncio.sleep(HL_PING_INTERVAL)
+                await ws_conn.send(json.dumps({"method": "ping"}))
+        except (asyncio.CancelledError, Exception):
+            pass  # Task cancelled on disconnect or shutdown — expected
 
-            mids = data.get("data", {}).get("mids", {})
-            if symbol not in mids:
-                continue
+    while not duration_reached:
+        # Check if duration has expired before (re)connecting
+        if time.time() > end_time:
+            logger.info("Duration reached (%d min). Not reconnecting.", args.duration)
+            break
 
-            price = float(mids[symbol])
-            ts = time.time()
-            tick_count += 1
-
-            # Feed tick to strategy
-            md = MarketData(
-                asset=symbol, price=price, volume_24h=0.0, timestamp=ts,
+        # Reconcile state with exchange before reconnecting (skip first connection)
+        if reconnect_count > 0 and adapter is not None:
+            logger.info("=" * 40)
+            logger.info("RECONNECT #%d — reconciling state...", reconnect_count)
+            logger.info("=" * 40)
+            backstop_oid = await reconcile_on_reconnect(
+                adapter, strategy, symbol, backstop_oid,
             )
 
-            # Get positions for strategy (if adapter available)
-            positions = []
-            if adapter and tick_count % 10 == 0:
-                # Check positions every 10 ticks to avoid rate limiting
-                try:
-                    positions = await adapter.get_positions()
-                except Exception:
-                    pass
+        try:
+            async with websockets.connect(
+                PRICE_WS_URL,
+                ping_interval=20,   # WS frame-level keep-alive (client-side staleness detection)
+                ping_timeout=20,    # Raises ConnectionClosedError if no pong within 20s
+                close_timeout=5,    # Graceful close timeout
+            ) as ws:
+                await ws.send(subscribe_msg)
 
-            balance_val = 100_000.0  # Default; doesn't affect signal generation
-            signals = strategy.generate_signals(md, positions, balance_val)
-
-            for signal in signals:
-                signal_count += 1
-                logger.info(
-                    "*** SIGNAL #%d: %s %s | price=%.2f | reason=%s",
-                    signal_count, signal.signal_type.value, symbol, price, signal.reason,
-                )
-
-                # Accumulate for --json-report
-                if args.json_report:
-                    signal_log.append({
-                        "timestamp": ts,
-                        "type": signal.signal_type.value,
-                        "price": price,
-                        "size": signal.size,
-                        "reason": signal.reason,
-                        "metadata": {
-                            k: v for k, v in (signal.metadata or {}).items()
-                            if k != "dc_event"  # Skip verbose DC event data
-                        },
-                    })
-
-                if adapter and not args.observe_only:
-                    # Cancel backstop before closing or reversing
-                    needs_cancel = (
-                        backstop_oid is not None
-                        and (
-                            signal.signal_type == SignalType.CLOSE
-                            or signal.metadata.get("reversal")
-                        )
+                if reconnect_count == 0:
+                    logger.info("Subscribed to allMids. Waiting for %s ticks...", symbol)
+                else:
+                    logger.info(
+                        "Reconnected and resubscribed. Strategy state preserved "
+                        "(ticks=%d, signals=%d, trades=%d)",
+                        tick_count, signal_count, trade_count,
                     )
-                    if needs_cancel:
-                        await cancel_backstop_sl(adapter, symbol, backstop_oid)
-                        backstop_oid = None
 
-                    ok = await execute_signal(adapter, signal, price)
-                    if ok:
-                        trade_count += 1
-                        # On entry fill: notify strategy + place backstop
-                        if signal.signal_type in (SignalType.BUY, SignalType.SELL):
-                            strategy.on_trade_executed(signal, price, signal.size)
-                            side = "LONG" if signal.signal_type == SignalType.BUY else "SHORT"
-                            # For reversals, backstop uses new position size (not 2x order size)
-                            backstop_size = signal.metadata.get("new_position_size", signal.size)
-                            backstop_oid = await place_backstop_sl(
-                                adapter, symbol, side, price,
-                                backstop_size, args.backstop_sl_pct,
+                # Start Hyperliquid JSON heartbeat as background task
+                heartbeat_task = asyncio.create_task(hl_heartbeat(ws))
+
+                try:
+                    async for message in ws:
+                        if time.time() > end_time:
+                            logger.info("Duration reached (%d min). Stopping.", args.duration)
+                            duration_reached = True
+                            break
+
+                        data = json.loads(message)
+
+                        # Ignore pong responses from our JSON heartbeat
+                        if data.get("channel") == "pong":
+                            continue
+
+                        if data.get("channel") != "allMids":
+                            continue
+
+                        mids = data.get("data", {}).get("mids", {})
+                        if symbol not in mids:
+                            continue
+
+                        price = float(mids[symbol])
+                        ts = time.time()
+                        tick_count += 1
+
+                        # Feed tick to strategy
+                        md = MarketData(
+                            asset=symbol, price=price, volume_24h=0.0, timestamp=ts,
+                        )
+
+                        # Get positions for strategy (if adapter available)
+                        positions = []
+                        if adapter and tick_count % 10 == 0:
+                            # Check positions every 10 ticks to avoid rate limiting
+                            try:
+                                positions = await adapter.get_positions()
+                            except Exception:
+                                pass
+
+                        balance_val = 100_000.0  # Default; doesn't affect signal generation
+                        signals = strategy.generate_signals(md, positions, balance_val)
+
+                        for signal in signals:
+                            signal_count += 1
+                            logger.info(
+                                "*** SIGNAL #%d: %s %s | price=%.2f | reason=%s",
+                                signal_count, signal.signal_type.value, symbol, price, signal.reason,
                             )
 
-            # Status log every 100 ticks
-            if tick_count % 100 == 0:
-                elapsed = ts - start_time
-                rm_status = strategy._trailing_rm.get_status()
-                pos_info = ""
-                if rm_status.get("has_position"):
-                    side = rm_status["side"]
-                    entry = rm_status["entry_price"]
-                    sl = rm_status["current_sl"]
-                    tp = rm_status["current_tp"]
-                    pnl_pct = (
-                        (price - entry) / entry * 100 if side == "LONG"
-                        else (entry - price) / entry * 100
+                            # Accumulate for --json-report
+                            if args.json_report:
+                                signal_log.append({
+                                    "timestamp": ts,
+                                    "type": signal.signal_type.value,
+                                    "price": price,
+                                    "size": signal.size,
+                                    "reason": signal.reason,
+                                    "metadata": {
+                                        k: v for k, v in (signal.metadata or {}).items()
+                                        if k != "dc_event"  # Skip verbose DC event data
+                                    },
+                                })
+
+                            if adapter and not args.observe_only:
+                                # Cancel backstop before closing or reversing
+                                needs_cancel = (
+                                    backstop_oid is not None
+                                    and (
+                                        signal.signal_type == SignalType.CLOSE
+                                        or signal.metadata.get("reversal")
+                                    )
+                                )
+                                if needs_cancel:
+                                    await cancel_backstop_sl(adapter, symbol, backstop_oid)
+                                    backstop_oid = None
+
+                                ok = await execute_signal(adapter, signal, price)
+                                if ok:
+                                    trade_count += 1
+                                    # On entry fill: notify strategy + place backstop
+                                    if signal.signal_type in (SignalType.BUY, SignalType.SELL):
+                                        strategy.on_trade_executed(signal, price, signal.size)
+                                        side = "LONG" if signal.signal_type == SignalType.BUY else "SHORT"
+                                        # For reversals, backstop uses new position size (not 2x order size)
+                                        backstop_size = signal.metadata.get("new_position_size", signal.size)
+                                        backstop_oid = await place_backstop_sl(
+                                            adapter, symbol, side, price,
+                                            backstop_size, args.backstop_sl_pct,
+                                        )
+
+                        # Status log every 100 ticks
+                        if tick_count % 100 == 0:
+                            elapsed = ts - start_time
+                            rm_status = strategy._trailing_rm.get_status()
+                            pos_info = ""
+                            if rm_status.get("has_position"):
+                                side = rm_status["side"]
+                                entry = rm_status["entry_price"]
+                                sl = rm_status["current_sl"]
+                                tp = rm_status["current_tp"]
+                                pnl_pct = (
+                                    (price - entry) / entry * 100 if side == "LONG"
+                                    else (entry - price) / entry * 100
+                                )
+                                pos_info = (
+                                    f" | {side} entry={entry:.2f} SL={sl:.2f} TP={tp:.2f} "
+                                    f"PnL={pnl_pct:+.3f}%"
+                                )
+                            remaining = f"remaining=%.0fs" % (end_time - ts,) if end_time != float("inf") else "∞"
+                            rc_info = f" rc={reconnect_count}" if reconnect_count > 0 else ""
+                            logger.info(
+                                "Tick #%d | price=%.2f | signals=%d trades=%d | "
+                                "elapsed=%.0fs %s%s%s",
+                                tick_count, price, signal_count, trade_count,
+                                elapsed, remaining, pos_info, rc_info,
+                            )
+                finally:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
+
+                # Inner loop exited without duration_reached → WS closed cleanly by server
+                if not duration_reached:
+                    reconnect_count += 1
+                    logger.info(
+                        "WebSocket closed by server. Reconnecting immediately...",
                     )
-                    pos_info = (
-                        f" | {side} entry={entry:.2f} SL={sl:.2f} TP={tp:.2f} "
-                        f"PnL={pnl_pct:+.3f}%"
-                    )
-                remaining = f"remaining=%.0fs" % (end_time - ts,) if end_time != float("inf") else "∞"
-                logger.info(
-                    "Tick #%d | price=%.2f | signals=%d trades=%d | "
-                    "elapsed=%.0fs %s%s",
-                    tick_count, price, signal_count, trade_count,
-                    elapsed, remaining, pos_info,
-                )
+
+        except websockets.exceptions.ConnectionClosedError as e:
+            reconnect_count += 1
+            code = e.rcvd.code if e.rcvd else "?"
+            reason = e.rcvd.reason if e.rcvd else "?"
+            logger.warning(
+                "WebSocket disconnected (code=%s, reason=%s). "
+                "Reconnecting immediately...",
+                code, reason,
+            )
+        except (ConnectionRefusedError, OSError, asyncio.TimeoutError) as e:
+            reconnect_count += 1
+            logger.error(
+                "Connection failed: %s. Reconnecting immediately...", e,
+            )
+        except asyncio.CancelledError:
+            # Clean shutdown (Ctrl+C)
+            logger.info("Shutdown requested.")
+            break
+        except Exception as e:
+            reconnect_count += 1
+            logger.error(
+                "Unexpected WS error: %s. Reconnecting immediately...", e,
+            )
 
     # Final summary
     elapsed = time.time() - start_time
@@ -596,6 +798,7 @@ async def main():
     logger.info("Ticks       : %d", tick_count)
     logger.info("DC signals  : %d", signal_count)
     logger.info("Trades      : %d", trade_count)
+    logger.info("Reconnects  : %d", reconnect_count)
 
     status = strategy.get_status()
     logger.info("DC events   : %d", status["dc_event_count"])
@@ -637,6 +840,7 @@ async def main():
             "signal_count": signal_count,
             "trade_count": trade_count,
             "dc_event_count": status["dc_event_count"],
+            "reconnect_count": reconnect_count,
             "signals": signal_log,
             "strategy_status": status,
         }
