@@ -14,6 +14,7 @@ dependencies = [
     "websockets>=15.0.1",
     "pandas",
     "numpy",
+    "claude-agent-sdk",
 ]
 
 [project.optional-dependencies]
@@ -33,3 +34,10 @@ markers = [
     "slow: marks tests that require network access (deselect with '-m \"not slow\"')",
 ]
 asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta:__legacy__"
+
+[tool.setuptools.packages.find]
+where = ["src"]

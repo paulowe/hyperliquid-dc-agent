@@ -141,6 +141,10 @@ def parse_args():
         "--yes", action="store_true",
         help="Skip mainnet confirmation prompt",
     )
+    parser.add_argument(
+        "--json-report", type=str, default=None,
+        help="Write structured JSON session report to this path at shutdown",
+    )
     return parser.parse_args()
 
 
@@ -441,6 +445,7 @@ async def main():
     signal_count = 0
     trade_count = 0
     backstop_oid = None  # Exchange-level backstop stop-loss order ID
+    signal_log = []  # Accumulated signals for --json-report
     start_time = time.time()
     # duration=0 means run forever
     end_time = start_time + args.duration * 60 if args.duration > 0 else float("inf")
@@ -492,6 +497,20 @@ async def main():
                     "*** SIGNAL #%d: %s %s | price=%.2f | reason=%s",
                     signal_count, signal.signal_type.value, symbol, price, signal.reason,
                 )
+
+                # Accumulate for --json-report
+                if args.json_report:
+                    signal_log.append({
+                        "timestamp": ts,
+                        "type": signal.signal_type.value,
+                        "price": price,
+                        "size": signal.size,
+                        "reason": signal.reason,
+                        "metadata": {
+                            k: v for k, v in (signal.metadata or {}).items()
+                            if k != "dc_event"  # Skip verbose DC event data
+                        },
+                    })
 
                 if adapter and not args.observe_only:
                     # Cancel backstop before closing or reversing
@@ -575,6 +594,39 @@ async def main():
         await adapter.disconnect()
 
     strategy.stop()
+
+    # Write JSON report if requested
+    if args.json_report:
+        elapsed = time.time() - start_time
+        report = {
+            "symbol": symbol,
+            "threshold": args.threshold,
+            "sl_pct": args.sl_pct,
+            "tp_pct": args.tp_pct,
+            "trail_pct": args.trail_pct,
+            "min_profit_to_trail_pct": args.min_profit_to_trail_pct,
+            "position_size_usd": args.position_size,
+            "leverage": args.leverage,
+            "observe_only": args.observe_only,
+            "duration_seconds": elapsed,
+            "start_time": start_time,
+            "end_time": time.time(),
+            "tick_count": tick_count,
+            "signal_count": signal_count,
+            "trade_count": trade_count,
+            "dc_event_count": status["dc_event_count"],
+            "signals": signal_log,
+            "strategy_status": status,
+        }
+        report_path = Path(args.json_report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        # Atomic write: write to tmp file, then rename
+        tmp_path = report_path.with_suffix(".tmp")
+        with open(tmp_path, "w") as f:
+            json.dump(report, f, indent=2)
+        tmp_path.rename(report_path)
+        logger.info("JSON report written to %s", report_path)
+
     logger.info("=" * 70)
 
 
