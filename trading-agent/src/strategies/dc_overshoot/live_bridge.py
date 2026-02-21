@@ -145,6 +145,10 @@ def parse_args():
         "--json-report", type=str, default=None,
         help="Write structured JSON session report to this path at shutdown",
     )
+    parser.add_argument(
+        "--validate", action="store_true",
+        help="Validate config for safety/profitability and exit (no trading)",
+    )
     return parser.parse_args()
 
 
@@ -359,6 +363,24 @@ async def main():
     import websockets
 
     args = parse_args()
+
+    # --validate: check config and exit early
+    if args.validate:
+        from strategies.dc_overshoot.validate import validate_dc_config
+
+        result = validate_dc_config(
+            threshold=args.threshold,
+            sl_pct=args.sl_pct,
+            tp_pct=args.tp_pct,
+            backstop_sl_pct=args.backstop_sl_pct,
+            leverage=args.leverage,
+            position_size_usd=args.position_size,
+            trail_pct=args.trail_pct,
+            min_profit_to_trail_pct=args.min_profit_to_trail_pct,
+        )
+        print(result.format())
+        sys.exit(1 if result.has_errors else 0)
+
     network = get_network()
     net_cfg = NETWORK_CONFIG[network]
     symbol = args.symbol
