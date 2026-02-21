@@ -29,6 +29,30 @@ test-trading: ## Run trading agent tests
 	uv run --package hyperliquid-trading-bot pytest
 
 # ============================================================================
+# Backtesting
+# ============================================================================
+
+symbol ?= SOL
+threshold ?= 0.015
+sl_pct ?= 0.015
+tp_pct ?= 0.005
+trail_pct ?= 0.5
+min_profit_to_trail ?= 0.002
+days ?= 7
+
+backtest: ## Single backtest (override: symbol, threshold, sl_pct, tp_pct, trail_pct, min_profit_to_trail, days)
+	@uv run --package hyperliquid-trading-bot python -m backtesting.cli \
+		--symbol $(symbol) --threshold $(threshold) --sl-pct $(sl_pct) --tp-pct $(tp_pct) \
+		--trail-pct $(trail_pct) --min-profit-to-trail-pct $(min_profit_to_trail) --days $(days)
+
+backtest-sweep: ## Parameter sweep (override: symbol, days)
+	@uv run --package hyperliquid-trading-bot python -m backtesting.cli \
+		--symbol $(symbol) --sweep --days $(days)
+
+test-backtest: ## Run backtesting module tests
+	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/backtesting/ -v
+
+# ============================================================================
 # Vertex AI Pipelines
 # ============================================================================
 

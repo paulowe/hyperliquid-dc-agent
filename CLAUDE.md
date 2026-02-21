@@ -56,6 +56,15 @@ make test-trading                               # Run trading agent tests
 uv run --package hyperliquid-trading-bot python trading-agent/learning_examples/01_websockets/realtime_prices.py
 ```
 
+### Backtesting
+```bash
+make backtest                                   # Single backtest (SOL, default optimal params)
+make backtest symbol=BTC threshold=0.01         # Custom symbol/params
+make backtest-sweep                             # Parameter sweep (1,296 combos, SOL)
+make backtest-sweep symbol=ETH days=14          # Sweep for different symbol/period
+make test-backtest                              # Run backtesting module tests
+```
+
 ### Vertex AI Pipelines
 ```bash
 make test-trigger                               # Test pipeline trigger code
@@ -99,6 +108,17 @@ Bot configurations are stored as YAML files in `trading-agent/bots/`. Each inclu
 - `grid` - Grid strategy parameters
 - `risk_management` - Stop loss, take profit, drawdown limits
 - `monitoring` - Logging settings
+
+### Backtesting Module (`trading-agent/src/backtesting/`)
+Reusable module for historical strategy testing. Use `/backtest <SYMBOL>` skill to run.
+
+- **candle_fetcher.py**: Fetches Hyperliquid 1m candles with disk cache (`~/.cache/hyperliquid-backtest/`)
+- **engine.py**: `BacktestEngine` feeds candles through `DCOvershootStrategy`, records trades with fee accounting
+- **metrics.py**: `compute_metrics()` computes win rate, P&L, profit factor, max drawdown, etc.
+- **sweep.py**: `ParameterSweep` grid search over 1,296 parameter combos, ranks by net P&L
+- **cli.py**: CLI entry point (`python -m backtesting.cli`)
+
+Key insight: threshold=0.015 (1.5%) makes 100% of SOL configs profitable. Lower thresholds produce too many fee-eaten trades.
 
 ### Hyperliquid API
 - **Testnet**: `https://api.hyperliquid-testnet.xyz`
