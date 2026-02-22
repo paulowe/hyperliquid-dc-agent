@@ -19,6 +19,7 @@ def good_config(**overrides) -> dict:
         "sl_pct": 0.015,
         "tp_pct": 0.005,
         "backstop_sl_pct": 0.05,
+        "backstop_tp_pct": 0.10,
         "leverage": 10,
         "position_size_usd": 100.0,
         "trail_pct": 0.5,
@@ -49,7 +50,7 @@ class TestGoodConfig:
         """Good config should still have info messages."""
         result = validate_dc_config(**good_config())
         info = [i for i in result.issues if i.level == "info"]
-        assert len(info) >= 3  # I1, I2, I3
+        assert len(info) >= 4  # I1, I2, I3, I4
 
 
 # --- Error rules ---
@@ -214,6 +215,37 @@ class TestInfoMessages:
     def test_i3_protection_layers(self):
         result = validate_dc_config(**good_config())
         assert has_code(result, "I3")
+
+    def test_i4_backstop_tp(self):
+        result = validate_dc_config(**good_config())
+        assert has_code(result, "I4")
+
+
+# --- Backstop TP rules ---
+
+class TestErrorE6BackstopTpNotPositive:
+    def test_zero_backstop_tp(self):
+        result = validate_dc_config(**good_config(backstop_tp_pct=0.0))
+        assert has_code(result, "E6")
+
+    def test_negative_backstop_tp(self):
+        result = validate_dc_config(**good_config(backstop_tp_pct=-0.05))
+        assert has_code(result, "E6")
+
+    def test_positive_backstop_tp_ok(self):
+        result = validate_dc_config(**good_config(backstop_tp_pct=0.10))
+        assert not has_code(result, "E6")
+
+
+class TestWarningW7BackstopTpTighterThanSoftwareTP:
+    def test_backstop_tp_less_than_software_tp(self):
+        # backstop_tp_pct=0.001 < tp_pct=0.005 → exchange closes before trailing
+        result = validate_dc_config(**good_config(backstop_tp_pct=0.001, tp_pct=0.005))
+        assert has_code(result, "W7")
+
+    def test_backstop_tp_wider_than_software_tp(self):
+        result = validate_dc_config(**good_config(backstop_tp_pct=0.10, tp_pct=0.005))
+        assert not has_code(result, "W7")
 
 
 # --- Result properties ---

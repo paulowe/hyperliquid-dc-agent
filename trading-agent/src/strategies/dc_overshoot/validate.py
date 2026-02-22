@@ -69,6 +69,7 @@ def validate_dc_config(
     trail_pct: float = 0.5,
     min_profit_to_trail_pct: float = 0.001,
     taker_fee_pct: float = 0.00035,
+    backstop_tp_pct: float = 0.10,
 ) -> ValidationResult:
     """Validate DC Overshoot config for safety and profitability.
 
@@ -128,6 +129,14 @@ def validate_dc_config(
             level="error",
             code="E5",
             message=f"Leverage {leverage}x outside Hyperliquid range (1-50x).",
+        ))
+
+    # E6: Backstop TP must be positive
+    if backstop_tp_pct <= 0:
+        result.issues.append(ValidationIssue(
+            level="error",
+            code="E6",
+            message="Backstop TP must be positive.",
         ))
 
     # --- Warnings ---
@@ -203,6 +212,17 @@ def validate_dc_config(
             ),
         ))
 
+    # W7: Backstop TP tighter than software TP
+    if backstop_tp_pct < tp_pct:
+        result.issues.append(ValidationIssue(
+            level="warning",
+            code="W7",
+            message=(
+                f"Backstop TP {backstop_tp_pct*100:.2f}% < software TP {tp_pct*100:.2f}%. "
+                f"Exchange will close position before trailing SL can work."
+            ),
+        ))
+
     # --- Info ---
 
     # I1: Margin impact
@@ -233,10 +253,22 @@ def validate_dc_config(
             level="info",
             code="I3",
             message=(
-                f"Protection: Software SL ({sl_pct*100:.2f}%) -> "
-                f"Backstop ({backstop_sl_pct*100:.1f}%) -> "
-                f"Liquidation (~{liquidation_dist*100:.1f}%)"
+                f"Loss protection: Software SL ({sl_pct*100:.2f}%) -> "
+                f"Backstop SL ({backstop_sl_pct*100:.1f}%) -> "
+                f"Liquidation (~{liquidation_dist*100:.1f}%) | "
+                f"Profit protection: Software TP -> "
+                f"Backstop TP ({backstop_tp_pct*100:.1f}%)"
             ),
         ))
+
+    # I4: Backstop TP info
+    result.issues.append(ValidationIssue(
+        level="info",
+        code="I4",
+        message=(
+            f"Backstop TP at {backstop_tp_pct*100:.1f}%: "
+            f"exchange captures profit if bot crashes while in profit"
+        ),
+    ))
 
     return result

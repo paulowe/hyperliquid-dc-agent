@@ -174,6 +174,29 @@ The software trailing SL handles normal exits. The backstop is a safety net.
 | 20x | ~5% | 3% | 10% |
 | 40x | ~2.5% | 1.5% | 5% |
 
+### `--backstop-tp-pct` (default: 0.10 = 10%)
+
+**Exchange-level hard take profit** — a trigger order placed directly on Hyperliquid.
+This only fires if the bridge (your computer/bot) crashes or disconnects while
+the position is in profit.
+
+The software trailing SL handles normal profit-taking. The backstop TP is a safety net
+that ensures profits are captured even if the bot goes offline.
+
+```
+     Normal operation           Bridge crash while in profit
+     ────────────────           ────────────────────────────
+     Trailing SL exits      →  Backstop TP exits
+     (ratchets to lock in)      (exchange trigger order)
+```
+
+**Must be wider than software TP**, otherwise the exchange closes the position
+before the trailing mechanism gets a chance to let profits run.
+
+Example with `--backstop-tp-pct 0.10`:
+- LONG entry @ 67,000 → backstop TP trigger at 73,700 (10% above)
+- SHORT entry @ 67,000 → backstop TP trigger at 60,300 (10% below)
+
 ### `--duration` (default: 30)
 
 How long the bot runs in minutes. When duration expires:
@@ -188,26 +211,36 @@ orders. Use this to observe how the bot would trade without risking money.
 
 ---
 
-## The three layers of protection
+## The layers of protection
 
 ```
-                        ┌─────────────────────┐
-   Layer 1 (software)   │  Trailing SL / TP    │  Checks every tick (~1s)
-                        │  --sl-pct / --tp-pct │  Ratchets to lock in profit
-                        └──────────┬──────────┘
-                                   │
-                        ┌──────────▼──────────┐
-   Layer 2 (exchange)   │  Backstop SL         │  Trigger order on exchange
-                        │  --backstop-sl-pct   │  Only fires if bot is offline
-                        └──────────┬──────────┘
-                                   │
-                        ┌──────────▼──────────┐
-   Layer 3 (exchange)   │  Liquidation         │  Forced close by exchange
-                        │  ~1/leverage         │  You lose everything + fee
-                        └─────────────────────┘
+                        ┌──────────────────────────┐
+   Layer 1 (software)   │  Trailing SL / TP         │  Checks every tick (~1s)
+                        │  --sl-pct / --tp-pct      │  Ratchets to lock in profit
+                        └────────────┬─────────────┘
+                                     │
+              ┌──────────────────────┼──────────────────────┐
+              │                      │                      │
+              │   ┌──────────────────▼─────────────────┐    │
+   Layer 2    │   │  Backstop SL     --backstop-sl-pct │    │
+   (exchange) │   │  Fires if bot offline (loss side)  │    │
+              │   └────────────────────────────────────┘    │
+              │                                             │
+              │   ┌────────────────────────────────────┐    │
+              │   │  Backstop TP     --backstop-tp-pct │    │
+              │   │  Fires if bot offline (profit side)│    │
+              │   └────────────────────────────────────┘    │
+              └──────────────────────┬──────────────────────┘
+                                     │
+                        ┌────────────▼─────────────┐
+   Layer 3 (exchange)   │  Liquidation              │  Forced close by exchange
+                        │  ~1/leverage              │  You lose everything + fee
+                        └──────────────────────────┘
 ```
 
-**These must be ordered by distance**: `sl-pct < backstop-sl-pct < 1/leverage`
+**Loss side must be ordered by distance**: `sl-pct < backstop-sl-pct < 1/leverage`
+
+**Profit side**: `backstop-tp-pct > tp-pct` so trailing has room to work
 
 ---
 
@@ -221,6 +254,7 @@ Config: `--threshold 0.001 --sl-pct 0.003 --tp-pct 0.10 --trail-pct 0.5 --levera
    Initial SL: 67,201 (0.3% above = 3% margin loss at 10x)
    Initial TP: 60,300 (10% below = 100% margin profit at 10x)
    Backstop SL: 73,700 (10% above, on exchange)
+   Backstop TP: 60,300 (10% below, on exchange)
 
 2. Price drops to 66,933 (0.1% profit, 1% on UI)
    → min_profit_to_trail (0.1%) reached
@@ -248,31 +282,31 @@ Config: `--threshold 0.001 --sl-pct 0.003 --tp-pct 0.10 --trail-pct 0.5 --levera
 
 ```bash
 --threshold 0.001 --sl-pct 0.003 --tp-pct 0.10 \
---trail-pct 0.5 --leverage 3 --backstop-sl-pct 0.10 \
+--trail-pct 0.5 --leverage 3 --backstop-sl-pct 0.10 --backstop-tp-pct 0.10 \
 --position-size 13
 ```
 
 - SL hit = 0.9% margin loss (manageable)
-- Backstop at 10%, liquidation at ~33% (plenty of room)
+- Backstop SL at 10%, backstop TP at 10%, liquidation at ~33% (plenty of room)
 - Small position size
 
 ### Moderate (confident in signals)
 
 ```bash
 --threshold 0.001 --sl-pct 0.003 --tp-pct 0.10 \
---trail-pct 0.5 --leverage 10 --backstop-sl-pct 0.05 \
+--trail-pct 0.5 --leverage 10 --backstop-sl-pct 0.05 --backstop-tp-pct 0.10 \
 --position-size 50
 ```
 
 - SL hit = 3% margin loss
-- Backstop at 5%, liquidation at ~10% (backstop fires first)
+- Backstop SL at 5%, backstop TP at 10%, liquidation at ~10% (backstop fires first)
 - Larger position
 
 ### Aggressive (experienced, high conviction)
 
 ```bash
 --threshold 0.005 --sl-pct 0.010 --tp-pct 0.10 \
---trail-pct 0.5 --leverage 10 --backstop-sl-pct 0.05 \
+--trail-pct 0.5 --leverage 10 --backstop-sl-pct 0.05 --backstop-tp-pct 0.10 \
 --position-size 100
 ```
 
@@ -287,7 +321,8 @@ Config: `--threshold 0.001 --sl-pct 0.003 --tp-pct 0.10 --trail-pct 0.5 --levera
 Before running, verify:
 
 1. **SL margin loss is acceptable**: `sl_pct x leverage` = your worst normal loss
-2. **Backstop < liquidation**: `backstop_sl_pct < 1/leverage`
+2. **Backstop SL < liquidation**: `backstop_sl_pct < 1/leverage`
 3. **SL is proportional to threshold**: `sl_pct` should be 2-5x `threshold`
 4. **TP is wide**: Let the ratcheting SL do the profit-taking work
 5. **Position size is affordable**: `position_size / leverage` = margin used per trade
+6. **Backstop TP > software TP**: `backstop_tp_pct > tp_pct` so trailing has room to work

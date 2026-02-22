@@ -33,6 +33,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 # Add src to path for imports
 _SRC_DIR = Path(__file__).parent.parent.parent
@@ -62,6 +63,13 @@ logger = logging.getLogger(__name__)
 PRICE_WS_URL = "wss://api.hyperliquid.xyz/ws"
 
 DEFAULT_SYMBOL = "BTC"
+
+
+class BackstopOids(NamedTuple):
+    """OIDs for exchange-level backstop orders (SL and TP)."""
+    sl_oid: int | None
+    tp_oid: int | None
+
 
 # Network-specific constants
 NETWORK_CONFIG = {
@@ -136,6 +144,10 @@ def parse_args():
     parser.add_argument(
         "--backstop-sl-pct", type=float, default=0.10,
         help="Hard stop-loss on exchange as crash protection (default: 0.10 = 10%%)",
+    )
+    parser.add_argument(
+        "--backstop-tp-pct", type=float, default=0.10,
+        help="Hard take-profit on exchange as crash protection (default: 0.10 = 10%%)",
     )
     parser.add_argument(
         "--yes", action="store_true",
@@ -278,27 +290,111 @@ async def cancel_backstop_sl(adapter, symbol: str, backstop_oid: int | None) -> 
         logger.warning("Failed to cancel backstop SL OID=%s: %s", backstop_oid, e)
 
 
+async def place_backstop_tp(adapter, symbol: str, side: str, entry_price: float,
+                            size: float, backstop_pct: float) -> int | None:
+    """Place a trigger take-profit order on the exchange as a crash-protection backstop.
+
+    Mirrors place_backstop_sl() but uses tpsl="tp" and triggers in the profit direction.
+    This ensures profits are captured even if the bot goes offline.
+
+    Returns the order ID (oid) if successful, None otherwise.
+    """
+    from hyperliquid.utils.signing import OrderType as HLOrderType
+
+    try:
+        # For LONG: sell if price rises above backstop level (profit)
+        # For SHORT: buy if price drops below backstop level (profit)
+        if side == "LONG":
+            trigger_px = entry_price * (1 + backstop_pct)
+            is_buy = False  # Sell to close long
+        else:
+            trigger_px = entry_price * (1 - backstop_pct)
+            is_buy = True   # Buy to close short
+
+        # Round size and trigger price
+        rounded_size = float(adapter._round_size(symbol, size))
+        rounded_trigger = float(round(trigger_px, 1))
+
+        # limit_px slippage room:
+        # LONG TP (sell): limit below trigger (willing to sell slightly cheaper)
+        # SHORT TP (buy): limit above trigger (willing to buy slightly higher)
+        if is_buy:
+            limit_px = float(round(rounded_trigger * 1.01, 1))  # 1% above trigger
+        else:
+            limit_px = float(round(rounded_trigger * 0.99, 1))  # 1% below trigger
+
+        order_type = HLOrderType({"trigger": {
+            "triggerPx": rounded_trigger,
+            "isMarket": True,
+            "tpsl": "tp",  # Take-profit trigger (not stop-loss)
+        }})
+
+        result = adapter.exchange.order(
+            name=symbol,
+            is_buy=is_buy,
+            sz=rounded_size,
+            limit_px=limit_px,
+            order_type=order_type,
+            reduce_only=True,
+        )
+
+        # Extract order ID from response
+        if result.get("status") == "ok":
+            statuses = result["response"]["data"]["statuses"]
+            for s in statuses:
+                if "resting" in s:
+                    oid = s["resting"]["oid"]
+                    logger.info(
+                        "BACKSTOP TP placed: %s %s @ %.2f -> trigger %.2f (%.1f%%) | OID=%s",
+                        side, symbol, entry_price, rounded_trigger, backstop_pct * 100, oid,
+                    )
+                    return oid
+                if "filled" in s:
+                    # Backstop triggered immediately (price already past trigger)
+                    logger.warning("BACKSTOP TP triggered immediately — price already past trigger")
+                    return None
+
+        logger.warning("BACKSTOP TP order response unexpected: %s", result)
+        return None
+
+    except Exception as e:
+        logger.error("Failed to place backstop TP: %s", e)
+        return None
+
+
+async def cancel_backstop_tp(adapter, symbol: str, backstop_tp_oid: int | None) -> None:
+    """Cancel the exchange backstop TP order when position closes normally."""
+    if backstop_tp_oid is None:
+        return
+    try:
+        result = adapter.exchange.cancel(symbol, backstop_tp_oid)
+        logger.info("BACKSTOP TP cancelled: OID=%s", backstop_tp_oid)
+    except Exception as e:
+        logger.warning("Failed to cancel backstop TP OID=%s: %s", backstop_tp_oid, e)
+
+
 async def reconcile_on_reconnect(
-    adapter, strategy, symbol: str, backstop_oid: int | None,
-) -> int | None:
+    adapter, strategy, symbol: str, backstop_oids: BackstopOids,
+) -> BackstopOids:
     """Reconcile strategy state with exchange positions after WS reconnect.
 
     Handles four scenarios:
     1. Strategy + exchange both have same position → preserve, update water marks
-    2. Strategy has position, exchange doesn't → backstop SL likely fired, clear state
+    2. Strategy has position, exchange doesn't → backstop fired, cancel orphans, clear state
     3. Neither has position → no-op
     4. Strategy has no position, exchange does → external position, log and ignore
 
-    Returns the updated backstop_oid (None if position was cleared).
+    Returns the updated BackstopOids (both None if position was cleared).
     """
     rm = strategy._trailing_rm
+    cleared = BackstopOids(sl_oid=None, tp_oid=None)
 
     # Fetch exchange positions via REST (adapter is independent of WS)
     try:
         positions = await adapter.get_positions()
     except Exception as e:
         logger.warning("Reconciliation failed — could not fetch positions: %s", e)
-        return backstop_oid  # Keep current state, hope next reconnect works
+        return backstop_oids  # Keep current state, hope next reconnect works
 
     # Find position for our symbol
     exchange_pos = None
@@ -323,7 +419,7 @@ async def reconcile_on_reconnect(
                     "Could not fetch market price for water mark update.",
                     rm.side, rm.entry_price, rm.size,
                 )
-                return backstop_oid
+                return backstop_oids
 
             # Ratchet water marks in favorable direction only
             if rm.side == "LONG" and rm._high_water_mark is not None:
@@ -345,7 +441,7 @@ async def reconcile_on_reconnect(
                 "Reconciliation: %s position intact (entry=%.2f, size=%.5f)",
                 rm.side, rm.entry_price, rm.size,
             )
-            return backstop_oid
+            return backstop_oids
         else:
             # Side mismatch — clear strategy state
             logger.warning(
@@ -354,22 +450,27 @@ async def reconcile_on_reconnect(
                 rm.side, exchange_side,
             )
             rm.close_position()
-            return None
+            return cleared
 
     # Scenario 2: Strategy has position, exchange does NOT
     if strategy_has_pos and not exchange_has_pos:
         logger.warning(
             "Reconciliation: strategy had %s position but exchange has none. "
-            "Backstop SL likely fired during outage. Clearing strategy state.",
+            "Backstop likely fired during outage. Clearing strategy state.",
             rm.side,
         )
+        # Cancel surviving backstop orders (one may have fired, the other is orphaned)
+        if backstop_oids.sl_oid is not None:
+            await cancel_backstop_sl(adapter, symbol, backstop_oids.sl_oid)
+        if backstop_oids.tp_oid is not None:
+            await cancel_backstop_tp(adapter, symbol, backstop_oids.tp_oid)
         rm.close_position()
-        return None
+        return cleared
 
     # Scenario 3: Neither has position — clean state
     if not strategy_has_pos and not exchange_has_pos:
         logger.info("Reconciliation: no position on either side. Clean state.")
-        return backstop_oid
+        return backstop_oids
 
     # Scenario 4: Exchange has position, strategy doesn't — external position
     if not strategy_has_pos and exchange_has_pos:
@@ -379,9 +480,9 @@ async def reconcile_on_reconnect(
             "LONG" if exchange_pos.size > 0 else "SHORT",
             exchange_pos.size,
         )
-        return backstop_oid
+        return backstop_oids
 
-    return backstop_oid
+    return backstop_oids
 
 
 async def execute_signal(adapter, signal, current_price: float) -> bool:
@@ -479,6 +580,7 @@ async def main():
             sl_pct=args.sl_pct,
             tp_pct=args.tp_pct,
             backstop_sl_pct=args.backstop_sl_pct,
+            backstop_tp_pct=args.backstop_tp_pct,
             leverage=args.leverage,
             position_size_usd=args.position_size,
             trail_pct=args.trail_pct,
@@ -545,6 +647,7 @@ async def main():
     logger.info("SL/TP      : %.2f%% / %.2f%%", args.sl_pct * 100, args.tp_pct * 100)
     logger.info("Trail      : %.0f%% lock-in", args.trail_pct * 100)
     logger.info("Backstop SL: %.1f%% (hard stop on exchange)", args.backstop_sl_pct * 100)
+    logger.info("Backstop TP: %.1f%% (hard TP on exchange)", args.backstop_tp_pct * 100)
     logger.info("Duration   : %s", f"{args.duration} minutes" if args.duration > 0 else "unlimited (Ctrl+C to stop)")
     logger.info("=" * 70)
 
@@ -572,7 +675,8 @@ async def main():
     tick_count = 0
     signal_count = 0
     trade_count = 0
-    backstop_oid = None  # Exchange-level backstop stop-loss order ID
+    backstop_sl_oid = None  # Exchange-level backstop stop-loss order ID
+    backstop_tp_oid = None  # Exchange-level backstop take-profit order ID
     signal_log = []  # Accumulated signals for --json-report
     start_time = time.time()
     # duration=0 means run forever
@@ -611,9 +715,12 @@ async def main():
             logger.info("=" * 40)
             logger.info("RECONNECT #%d — reconciling state...", reconnect_count)
             logger.info("=" * 40)
-            backstop_oid = await reconcile_on_reconnect(
-                adapter, strategy, symbol, backstop_oid,
+            backstop_oids = await reconcile_on_reconnect(
+                adapter, strategy, symbol,
+                BackstopOids(sl_oid=backstop_sl_oid, tp_oid=backstop_tp_oid),
             )
+            backstop_sl_oid = backstop_oids.sl_oid
+            backstop_tp_oid = backstop_oids.tp_oid
 
         try:
             async with websockets.connect(
@@ -699,30 +806,36 @@ async def main():
                                 })
 
                             if adapter and not args.observe_only:
-                                # Cancel backstop before closing or reversing
+                                # Cancel backstops before closing or reversing
                                 needs_cancel = (
-                                    backstop_oid is not None
+                                    (backstop_sl_oid is not None or backstop_tp_oid is not None)
                                     and (
                                         signal.signal_type == SignalType.CLOSE
                                         or signal.metadata.get("reversal")
                                     )
                                 )
                                 if needs_cancel:
-                                    await cancel_backstop_sl(adapter, symbol, backstop_oid)
-                                    backstop_oid = None
+                                    await cancel_backstop_sl(adapter, symbol, backstop_sl_oid)
+                                    await cancel_backstop_tp(adapter, symbol, backstop_tp_oid)
+                                    backstop_sl_oid = None
+                                    backstop_tp_oid = None
 
                                 ok = await execute_signal(adapter, signal, price)
                                 if ok:
                                     trade_count += 1
-                                    # On entry fill: notify strategy + place backstop
+                                    # On entry fill: notify strategy + place backstops
                                     if signal.signal_type in (SignalType.BUY, SignalType.SELL):
                                         strategy.on_trade_executed(signal, price, signal.size)
                                         side = "LONG" if signal.signal_type == SignalType.BUY else "SHORT"
                                         # For reversals, backstop uses new position size (not 2x order size)
                                         backstop_size = signal.metadata.get("new_position_size", signal.size)
-                                        backstop_oid = await place_backstop_sl(
+                                        backstop_sl_oid = await place_backstop_sl(
                                             adapter, symbol, side, price,
                                             backstop_size, args.backstop_sl_pct,
+                                        )
+                                        backstop_tp_oid = await place_backstop_tp(
+                                            adapter, symbol, side, price,
+                                            backstop_size, args.backstop_tp_pct,
                                         )
 
                         # Status log every 100 ticks
@@ -832,6 +945,8 @@ async def main():
             "min_profit_to_trail_pct": args.min_profit_to_trail_pct,
             "position_size_usd": args.position_size,
             "leverage": args.leverage,
+            "backstop_sl_pct": args.backstop_sl_pct,
+            "backstop_tp_pct": args.backstop_tp_pct,
             "observe_only": args.observe_only,
             "duration_seconds": elapsed,
             "start_time": start_time,

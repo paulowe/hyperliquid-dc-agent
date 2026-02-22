@@ -3,7 +3,7 @@
 Tests cover:
 - reconcile_on_reconnect() for all position state scenarios
 - Water mark updates (only in favorable direction)
-- Backstop OID management across reconnects
+- BackstopOids (SL + TP) management across reconnects
 """
 
 import asyncio
@@ -55,6 +55,9 @@ def make_adapter_mock(
     adapter = AsyncMock()
     adapter.get_positions = AsyncMock(return_value=positions or [])
     adapter.get_market_price = AsyncMock(return_value=market_price)
+    # exchange.cancel() is sync in the real SDK, use MagicMock to avoid
+    # "coroutine was never awaited" warnings from cancel_backstop_sl/tp
+    adapter.exchange = MagicMock()
     return adapter
 
 
@@ -74,8 +77,8 @@ def make_position(
     )
 
 
-# Import reconcile_on_reconnect after path setup
-from strategies.dc_overshoot.live_bridge import reconcile_on_reconnect
+# Import after path setup
+from strategies.dc_overshoot.live_bridge import BackstopOids, reconcile_on_reconnect
 
 
 # ---------------------------------------------------------------------------
@@ -94,10 +97,12 @@ class TestReconcilePositionIntact:
             positions=[make_position(size=1.0, entry_price=100.0)],
             market_price=101.0,
         )
+        oids = BackstopOids(sl_oid=12345, tp_oid=67890)
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", 12345)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
-        assert result == 12345  # backstop preserved
+        assert result.sl_oid == 12345  # backstop SL preserved
+        assert result.tp_oid == 67890  # backstop TP preserved
         assert rm.has_position
         assert rm.side == "LONG"
 
@@ -110,10 +115,12 @@ class TestReconcilePositionIntact:
             positions=[make_position(size=-1.0, entry_price=100.0)],
             market_price=99.0,
         )
+        oids = BackstopOids(sl_oid=99999, tp_oid=88888)
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", 99999)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
-        assert result == 99999
+        assert result.sl_oid == 99999
+        assert result.tp_oid == 88888
         assert rm.has_position
         assert rm.side == "SHORT"
 
@@ -123,7 +130,7 @@ class TestReconcilePositionIntact:
 # ---------------------------------------------------------------------------
 
 class TestReconcilePositionClosedDuringOutage:
-    """When exchange position is gone (backstop SL fired), clear strategy state."""
+    """When exchange position is gone (backstop fired), clear strategy state."""
 
     @pytest.mark.asyncio
     async def test_long_closed_clears_state(self):
@@ -132,9 +139,11 @@ class TestReconcilePositionClosedDuringOutage:
         strategy = make_strategy_mock(rm)
         adapter = make_adapter_mock(positions=[])  # No positions on exchange
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", 12345)
+        oids = BackstopOids(sl_oid=12345, tp_oid=67890)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
-        assert result is None  # backstop cleared
+        assert result.sl_oid is None  # backstop cleared
+        assert result.tp_oid is None
         assert not rm.has_position
 
     @pytest.mark.asyncio
@@ -144,10 +153,44 @@ class TestReconcilePositionClosedDuringOutage:
         strategy = make_strategy_mock(rm)
         adapter = make_adapter_mock(positions=[])
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", 77777)
+        oids = BackstopOids(sl_oid=77777, tp_oid=66666)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
-        assert result is None
+        assert result.sl_oid is None
+        assert result.tp_oid is None
         assert not rm.has_position
+
+    @pytest.mark.asyncio
+    async def test_surviving_backstop_cancelled(self):
+        """When position is gone, cancel any surviving backstop orders."""
+        rm = make_rm()
+        rm.open_position("LONG", 100.0, 1.0)
+        strategy = make_strategy_mock(rm)
+        adapter = make_adapter_mock(positions=[])
+
+        # SL fired (position gone), but TP may still be on exchange
+        oids = BackstopOids(sl_oid=111, tp_oid=222)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
+
+        # Adapter.exchange.cancel should be called for surviving orders
+        cancel_calls = adapter.exchange.cancel.call_args_list
+        cancelled_oids = {call.args[1] for call in cancel_calls}
+        # Both should be cancelled (we don't know which one fired)
+        assert 111 in cancelled_oids
+        assert 222 in cancelled_oids
+
+    @pytest.mark.asyncio
+    async def test_no_cancel_when_no_oids(self):
+        """When OIDs are already None, no cancel calls."""
+        rm = make_rm()
+        rm.open_position("LONG", 100.0, 1.0)
+        strategy = make_strategy_mock(rm)
+        adapter = make_adapter_mock(positions=[])
+
+        oids = BackstopOids(sl_oid=None, tp_oid=None)
+        await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
+
+        adapter.exchange.cancel.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -163,9 +206,11 @@ class TestReconcileNoPositionBothSides:
         strategy = make_strategy_mock(rm)
         adapter = make_adapter_mock(positions=[])
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", None)
+        oids = BackstopOids(sl_oid=None, tp_oid=None)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
-        assert result is None
+        assert result.sl_oid is None
+        assert result.tp_oid is None
         assert not rm.has_position
 
 
@@ -184,9 +229,11 @@ class TestReconcileExternalPosition:
             positions=[make_position(size=2.0, entry_price=50.0)],
         )
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", None)
+        oids = BackstopOids(sl_oid=None, tp_oid=None)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
-        assert result is None
+        assert result.sl_oid is None
+        assert result.tp_oid is None
         assert not rm.has_position  # Strategy state unchanged
 
 
@@ -206,9 +253,11 @@ class TestReconcileSideMismatch:
             positions=[make_position(size=-1.0, entry_price=100.0)],  # SHORT
         )
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", 12345)
+        oids = BackstopOids(sl_oid=12345, tp_oid=67890)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
-        assert result is None  # backstop cleared
+        assert result.sl_oid is None  # backstop cleared
+        assert result.tp_oid is None
         assert not rm.has_position
 
     @pytest.mark.asyncio
@@ -220,9 +269,11 @@ class TestReconcileSideMismatch:
             positions=[make_position(size=1.0, entry_price=100.0)],  # LONG
         )
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", 55555)
+        oids = BackstopOids(sl_oid=55555, tp_oid=44444)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
-        assert result is None
+        assert result.sl_oid is None
+        assert result.tp_oid is None
         assert not rm.has_position
 
 
@@ -246,7 +297,8 @@ class TestReconcileWaterMarkUpdates:
             market_price=103.0,  # Price moved up during outage
         )
 
-        await reconcile_on_reconnect(adapter, strategy, "HYPE", 111)
+        oids = BackstopOids(sl_oid=111, tp_oid=222)
+        await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
         assert rm._high_water_mark == 103.0  # Updated to current price
 
@@ -262,7 +314,8 @@ class TestReconcileWaterMarkUpdates:
             market_price=97.0,  # Price dropped during outage
         )
 
-        await reconcile_on_reconnect(adapter, strategy, "HYPE", 222)
+        oids = BackstopOids(sl_oid=111, tp_oid=222)
+        await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
         assert rm._low_water_mark == 97.0  # Updated
 
@@ -286,7 +339,8 @@ class TestReconcileWaterMarkNoWeaken:
             market_price=102.0,  # Price pulled back during outage
         )
 
-        await reconcile_on_reconnect(adapter, strategy, "HYPE", 333)
+        oids = BackstopOids(sl_oid=333, tp_oid=444)
+        await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
         assert rm._high_water_mark == 105.0  # Stays at old high
 
@@ -302,7 +356,8 @@ class TestReconcileWaterMarkNoWeaken:
             market_price=98.0,  # Price bounced up during outage
         )
 
-        await reconcile_on_reconnect(adapter, strategy, "HYPE", 444)
+        oids = BackstopOids(sl_oid=333, tp_oid=444)
+        await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
         assert rm._low_water_mark == 95.0  # Stays at old low
 
@@ -323,9 +378,11 @@ class TestReconcileEdgeCases:
         adapter = make_adapter_mock()
         adapter.get_positions = AsyncMock(side_effect=Exception("Network error"))
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", 555)
+        oids = BackstopOids(sl_oid=555, tp_oid=666)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
-        assert result == 555  # backstop preserved
+        assert result.sl_oid == 555  # backstop preserved
+        assert result.tp_oid == 666
         assert rm.has_position  # State unchanged
 
     @pytest.mark.asyncio
@@ -340,10 +397,12 @@ class TestReconcileEdgeCases:
         )
         adapter.get_market_price = AsyncMock(side_effect=Exception("Timeout"))
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", 666)
+        oids = BackstopOids(sl_oid=666, tp_oid=777)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
         # Position check succeeds, water mark update skipped gracefully
-        assert result == 666
+        assert result.sl_oid == 666
+        assert result.tp_oid == 777
         assert rm.has_position
         assert rm._high_water_mark == 101.0  # Unchanged (price fetch failed)
 
@@ -357,8 +416,10 @@ class TestReconcileEdgeCases:
             positions=[make_position(asset="BTC", size=0.5, entry_price=90000.0)],
         )
 
-        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", 777)
+        oids = BackstopOids(sl_oid=777, tp_oid=888)
+        result = await reconcile_on_reconnect(adapter, strategy, "HYPE", oids)
 
         # Exchange has BTC position, not HYPE — strategy HYPE position is gone
-        assert result is None
+        assert result.sl_oid is None
+        assert result.tp_oid is None
         assert not rm.has_position
