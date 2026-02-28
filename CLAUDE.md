@@ -65,6 +65,14 @@ make backtest-sweep symbol=ETH days=14          # Sweep for different symbol/per
 make test-backtest                              # Run backtesting module tests
 ```
 
+### Trade Review
+```bash
+make review-trades                                 # Review last 24h of HYPE trades
+make review-trades review_symbol=SOL review_hours=48  # Custom symbol/period
+make review-trades-json review_symbol=HYPE         # JSON output for analysis
+make test-trade-review                             # Run trade review module tests
+```
+
 ### Vertex AI Pipelines
 ```bash
 make test-trigger                               # Test pipeline trigger code
@@ -119,6 +127,14 @@ Reusable module for historical strategy testing. Use `/backtest <SYMBOL>` skill 
 - **cli.py**: CLI entry point (`python -m backtesting.cli`)
 
 Key insight: threshold=0.015 (1.5%) makes 100% of SOL configs profitable. Lower thresholds produce too many fee-eaten trades.
+
+### Trade Review Module (`trading-agent/src/trade_review/`)
+Fetches live fills from Hyperliquid API and computes P&L metrics. Use `/review-trades <SYMBOL>` skill to run.
+
+- **fill_fetcher.py**: Standalone read-only API connection, fetches fills by wallet address + time range
+- **fill_pairer.py**: Pairs raw fills into round-trip `TradeRecord` objects using Hyperliquid `dir` field
+- **cli.py**: CLI entry point (`python -m trade_review.cli`), human-readable + JSON output
+- Reuses `compute_metrics()` from backtesting module for consistent P&L statistics
 
 ### Hyperliquid API
 - **Testnet**: `https://api.hyperliquid-testnet.xyz`
