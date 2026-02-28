@@ -1,18 +1,18 @@
-"""Trailing Risk Manager — greedy trailing SL/TP for DC Overshoot strategy.
+"""Trailing Risk Manager — trailing SL with fixed TP for DC Overshoot strategy.
 
 Core behavior:
-- When in a loss: SL and TP remain at initial levels (no ratcheting)
-- When in profit: SL ratchets toward profit direction (locks in gains),
-  TP pushes further in the profit direction (lets winners run)
+- TP stays fixed at initial level and fires when hit (primary profit exit)
+- When in a loss: SL remains at initial level (no ratcheting)
+- When in profit: SL ratchets toward profit direction (locks in gains)
 
 LONG positions:
 - SL starts below entry, ratchets UP as price makes new highs
-- TP starts above entry, pushes HIGHER on new highs
+- TP stays fixed above entry at initial level
 - high_water_mark tracks the highest price since entry
 
 SHORT positions:
 - SL starts above entry, ratchets DOWN as price makes new lows
-- TP starts below entry, pushes LOWER on new lows
+- TP stays fixed below entry at initial level
 - low_water_mark tracks the lowest price since entry
 """
 
@@ -27,10 +27,11 @@ logger = logging.getLogger(__name__)
 
 
 class TrailingRiskManager:
-    """Manages trailing stop loss and take profit for a single position.
+    """Manages trailing stop loss with fixed take profit for a single position.
 
-    The trailing logic only activates when the position is profitable.
-    When in a loss, SL and TP remain at their initial levels.
+    TP stays at its initial level and fires as the primary profit exit.
+    SL trailing only activates when the position is profitable.
+    When in a loss, SL remains at its initial level.
     """
 
     def __init__(
@@ -186,12 +187,9 @@ class TrailingRiskManager:
             profit_pct = (price - self._entry_price) / self._entry_price
             if profit_pct >= self._min_profit_to_trail:
                 # Ratchet SL: lock in trail_pct of profit from entry
+                # TP stays fixed at initial level (primary profit exit)
                 new_sl = self._entry_price + (self._high_water_mark - self._entry_price) * self._trail_pct
                 self._current_sl = max(self._current_sl, new_sl)
-
-                # Push TP: always based on current high water mark
-                new_tp = self._high_water_mark * (1 + self._tp_pct)
-                self._current_tp = max(self._current_tp, new_tp)
 
                 logger.debug(
                     "TrailingRM LONG: hwm=%.2f SL=%.2f TP=%.2f",
@@ -218,12 +216,9 @@ class TrailingRiskManager:
             profit_pct = (self._entry_price - price) / self._entry_price
             if profit_pct >= self._min_profit_to_trail:
                 # Ratchet SL down: lock in trail_pct of profit from entry
+                # TP stays fixed at initial level (primary profit exit)
                 new_sl = self._entry_price - (self._entry_price - self._low_water_mark) * self._trail_pct
                 self._current_sl = min(self._current_sl, new_sl)
-
-                # Push TP lower: based on current low water mark
-                new_tp = self._low_water_mark * (1 - self._tp_pct)
-                self._current_tp = min(self._current_tp, new_tp)
 
                 logger.debug(
                     "TrailingRM SHORT: lwm=%.2f SL=%.2f TP=%.2f",

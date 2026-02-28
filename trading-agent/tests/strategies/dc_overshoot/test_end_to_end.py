@@ -117,24 +117,21 @@ class TestDowntrendScenario:
         sell_signals = [s for s in signals if s.signal_type == SignalType.SELL]
         assert len(sell_signals) >= 1, "Downtrend should trigger at least one SHORT entry"
 
-    def test_downtrend_short_tp_keeps_trailing(self):
-        """In a sustained downtrend, trailing TP keeps pushing lower (greedy).
+    def test_downtrend_short_tp_fires(self):
+        """In a sustained downtrend, fixed TP fires when price drops enough.
 
-        The TP won't be hit because it retreats as the short profits.
-        Instead, the SL ratchets down, locking in profit. No exit occurs
-        until a reversal hits the ratcheted SL.
+        TP stays at initial level (entry * (1 - tp_pct)), so a sufficient
+        downtrend will hit it and close the position with profit.
         """
         strategy = DCOvershootStrategy(make_config())
         strategy.start()
         ticks = generate_downtrend(drop_pct=0.008, ticks=80)
         signals = run_strategy_on_ticks(strategy, ticks)
 
-        # Position should still be open (TP never hit, SL never hit)
-        assert strategy._trailing_rm.has_position is True
-        # SL should have ratcheted down from initial level
-        entry = strategy._trailing_rm.entry_price
-        initial_sl = entry * (1 + 0.003)
-        assert strategy._trailing_rm.current_sl_price < initial_sl
+        # With fixed TP, the position should have exited via TP
+        tp_exits = [s for s in signals if s.signal_type == SignalType.CLOSE
+                    and "take_profit" in s.reason]
+        assert len(tp_exits) >= 1, "Fixed TP should fire in a sustained downtrend"
 
 
 class TestVShapeScenario:

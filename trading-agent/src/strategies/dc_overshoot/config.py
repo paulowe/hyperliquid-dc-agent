@@ -16,10 +16,10 @@ class DCOvershootConfig:
 
     No ML model is needed — the threshold itself is the prediction.
 
-    Risk management uses a "greedy trailing" approach:
-    - When in a loss: SL and TP remain at initial levels
-    - When in profit: SL ratchets toward profit (locks in gains),
-      TP pushes further in the profit direction
+    Risk management uses trailing SL with fixed TP:
+    - TP stays fixed at initial level (primary profit exit)
+    - When in a loss: SL remains at initial level
+    - When in profit: SL ratchets toward profit (locks in gains)
     """
 
     symbol: str = "BTC"

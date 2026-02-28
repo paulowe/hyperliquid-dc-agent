@@ -8,10 +8,10 @@
 #   PDCC_Down (downward confirmation) → SHORT
 #   PDCC2_UP  (upward confirmation)   → LONG
 #
-# Risk management uses "greedy trailing":
-#   - When in loss: SL and TP remain at initial levels
-#   - When in profit: SL ratchets toward profit (locks in gains),
-#     TP pushes further in profit direction (lets winners run)
+# Risk management uses trailing SL with fixed TP:
+#   - TP stays fixed at initial level (primary profit exit)
+#   - When in loss: SL remains at initial level
+#   - When in profit: SL ratchets toward profit (locks in gains)
 
 name: "btc_dc_overshoot"
 active: true

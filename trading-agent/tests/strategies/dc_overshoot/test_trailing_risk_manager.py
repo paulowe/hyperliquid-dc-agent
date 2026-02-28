@@ -4,7 +4,7 @@ Tests cover:
 - Position initialization (LONG and SHORT)
 - Trailing SL ratcheting when profitable
 - Static SL/TP when in a loss
-- TP pushing further on new highs/lows
+- Fixed TP stays at initial level (no greedy pushing)
 - Stop loss and take profit exit signals
 - State management (close, has_position, get_status)
 """
@@ -201,8 +201,8 @@ class TestLongTrailingRatchet:
         mgr.update(100_050.0, 2.0)
         assert mgr.current_sl_price == ratcheted_sl  # Unchanged
 
-    def test_tp_pushes_higher_on_new_high(self):
-        """TP should increase when price makes new highs."""
+    def test_tp_stays_fixed_on_new_high(self):
+        """TP should remain at initial level even when price makes new highs."""
         mgr = make_manager()
         mgr.open_position("LONG", ENTRY_PRICE, 0.001)
         initial_tp = mgr.current_tp_price  # 100200
@@ -210,11 +210,26 @@ class TestLongTrailingRatchet:
         # Price rises to 100150 (below initial TP)
         mgr.update(100_150.0, 1.0)
 
-        # TP should be max(initial_tp, hwm * (1 + tp_pct))
-        # = max(100200, 100150 * 1.002) = max(100200, 100350.3) = 100350.3
-        expected_tp = 100_150.0 * (1 + TP_PCT)
-        assert mgr.current_tp_price == pytest.approx(expected_tp)
-        assert mgr.current_tp_price > initial_tp
+        # TP should stay at initial level (no greedy pushing)
+        assert mgr.current_tp_price == pytest.approx(initial_tp)
+
+    def test_tp_fires_after_sl_ratchets(self):
+        """Fixed TP should fire even after trailing SL has ratcheted up."""
+        mgr = make_manager()
+        mgr.open_position("LONG", ENTRY_PRICE, 0.001)
+        initial_tp = mgr.current_tp_price  # 100200
+
+        # Price rises to 100100 → SL ratchets up
+        mgr.update(100_100.0, 1.0)
+        assert mgr.current_sl_price > ENTRY_PRICE * (1 - SL_PCT)  # SL moved up
+
+        # TP stays at initial level
+        assert mgr.current_tp_price == pytest.approx(initial_tp)
+
+        # Price hits initial TP → should exit
+        signals = mgr.update(initial_tp, 2.0)
+        assert len(signals) == 1
+        assert "take_profit" in signals[0].reason
 
     def test_multiple_ratchet_steps_create_higher_floor(self):
         """Progressive new highs should keep raising the SL."""
@@ -324,17 +339,35 @@ class TestShortTrailingRatchet:
         mgr.update(99_900.0, 2.0)
         assert mgr.current_sl_price == ratcheted_sl  # Unchanged
 
-    def test_short_tp_pushes_lower(self):
-        """Short TP should decrease on new lows."""
+    def test_tp_stays_fixed_on_new_low(self):
+        """Short TP should remain at initial level even when price makes new lows."""
         mgr = make_manager()
         mgr.open_position("SHORT", ENTRY_PRICE, 0.001)
+        initial_tp = mgr.current_tp_price  # 99800
 
-        # Price drops to 99850
+        # Price drops to 99850 (profit for short, but above TP)
         mgr.update(99_850.0, 1.0)
 
-        # TP = min(initial_tp, lwm * (1 - tp_pct)) = min(99800, 99850*0.998) = min(99800, 99650.3)
-        expected_tp = 99_850.0 * (1 - TP_PCT)
-        assert mgr.current_tp_price == pytest.approx(expected_tp)
+        # TP should stay at initial level (no greedy pushing)
+        assert mgr.current_tp_price == pytest.approx(initial_tp)
+
+    def test_short_tp_fires_after_sl_ratchets(self):
+        """Fixed TP should fire even after trailing SL has ratcheted down."""
+        mgr = make_manager()
+        mgr.open_position("SHORT", ENTRY_PRICE, 0.001)
+        initial_tp = mgr.current_tp_price  # 99800
+
+        # Price drops to 99900 → SL ratchets down
+        mgr.update(99_900.0, 1.0)
+        assert mgr.current_sl_price < ENTRY_PRICE * (1 + SL_PCT)  # SL moved down
+
+        # TP stays at initial level
+        assert mgr.current_tp_price == pytest.approx(initial_tp)
+
+        # Price hits initial TP → should exit
+        signals = mgr.update(initial_tp, 2.0)
+        assert len(signals) == 1
+        assert "take_profit" in signals[0].reason
 
     def test_short_ratcheted_sl_triggers_on_bounce(self):
         """After SL ratchets down for short, bounce should trigger exit."""
