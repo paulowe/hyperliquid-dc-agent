@@ -52,6 +52,49 @@ backtest-sweep: ## Parameter sweep (override: symbol, days)
 test-backtest: ## Run backtesting module tests
 	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/backtesting/ -v
 
+# Multi-scale backtesting
+trade_threshold ?= 0.015
+sensor_thresholds ?= 0.002,0.004,0.008
+momentum_alpha ?= 0.3
+min_momentum_score ?= 0.3
+
+backtest-multi-scale: ## Multi-scale single backtest (override: symbol, trade_threshold, sensor_thresholds, momentum_alpha, min_momentum_score, sl_pct, tp_pct, trail_pct, min_profit_to_trail, days)
+	@uv run --package hyperliquid-trading-bot python -m backtesting.cli \
+		--multi-scale --symbol $(symbol) --trade-threshold $(trade_threshold) \
+		--sensor-thresholds $(sensor_thresholds) --momentum-alpha $(momentum_alpha) \
+		--min-momentum-score $(min_momentum_score) --sl-pct $(sl_pct) --tp-pct $(tp_pct) \
+		--trail-pct $(trail_pct) --min-profit-to-trail-pct $(min_profit_to_trail) --days $(days)
+
+backtest-multi-scale-sweep: ## Multi-scale parameter sweep (override: symbol, sensor_thresholds, days)
+	@uv run --package hyperliquid-trading-bot python -m backtesting.cli \
+		--multi-scale --sweep --symbol $(symbol) --sensor-thresholds $(sensor_thresholds) --days $(days)
+
+test-multi-scale: ## Run multi-scale strategy tests
+	@uv run --package hyperliquid-trading-bot python -m pytest \
+		trading-agent/tests/strategies/dc_overshoot/test_momentum_scorer.py \
+		trading-agent/tests/strategies/dc_overshoot/test_multi_scale_config.py \
+		trading-agent/tests/strategies/dc_overshoot/test_multi_scale_strategy.py \
+		trading-agent/tests/backtesting/test_multi_scale_engine.py \
+		trading-agent/tests/backtesting/test_multi_scale_sweep.py -v
+
+# ============================================================================
+# Trade Review
+# ============================================================================
+
+review_symbol ?= HYPE
+review_hours ?= 24
+
+review-trades: ## Review live trade P&L (override: review_symbol, review_hours)
+	@uv run --package hyperliquid-trading-bot python -m trade_review.cli \
+		--symbol $(review_symbol) --hours $(review_hours)
+
+review-trades-json: ## Review live trades with JSON output (override: review_symbol, review_hours)
+	@uv run --package hyperliquid-trading-bot python -m trade_review.cli \
+		--symbol $(review_symbol) --hours $(review_hours) --json
+
+test-trade-review: ## Run trade review module tests
+	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/trade_review/ -v
+
 # ============================================================================
 # Vertex AI Pipelines
 # ============================================================================

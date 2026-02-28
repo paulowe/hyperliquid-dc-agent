@@ -6,7 +6,12 @@ import itertools
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from backtesting.engine import BacktestConfig, BacktestEngine
+from backtesting.engine import (
+    BacktestConfig,
+    BacktestEngine,
+    MultiScaleBacktestConfig,
+    MultiScaleBacktestEngine,
+)
 from backtesting.metrics import compute_metrics
 
 
@@ -242,6 +247,240 @@ class ParameterSweep:
                     "max_drawdown_usd": round(r.max_drawdown_usd, 4),
                     "net_pnl_per_day": round(r.net_pnl_per_day, 4),
                     "trades_eaten_by_fees": r.trades_eaten_by_fees,
+                }
+            )
+        return output
+
+
+# ===========================================================================
+# Multi-Scale Parameter Sweep
+# ===========================================================================
+
+# Default multi-scale grid (4 * 3 * 4 * 4 * 4 * 3 * 2 = 4,608 combos)
+MS_DEFAULT_TRADE_THRESHOLDS = [0.008, 0.01, 0.015, 0.02]
+MS_DEFAULT_MOMENTUM_ALPHAS = [0.2, 0.3, 0.5]
+MS_DEFAULT_MIN_MOMENTUM_SCORES = [0.1, 0.2, 0.3, 0.5]
+MS_DEFAULT_SL_PCTS = [0.005, 0.01, 0.015, 0.02]
+MS_DEFAULT_TP_PCTS = [0.005, 0.01, 0.02, 0.05]
+MS_DEFAULT_TRAIL_PCTS = [0.3, 0.5, 0.7]
+MS_DEFAULT_MIN_PROFIT_TO_TRAIL_PCTS = [0.001, 0.002]
+
+
+@dataclass
+class MultiScaleSweepConfig:
+    """Configuration for a multi-scale parameter sweep.
+
+    Sensor thresholds are fixed (not swept) — the intelligence layer stays
+    constant while we optimise trade-threshold and risk parameters.
+    """
+
+    symbol: str = "SOL"
+    position_size_usd: float = 100.0
+    leverage: int = 10
+    taker_fee_pct: float = 0.00035
+    cooldown_seconds: float = 10.0
+    min_trades: int = 5
+
+    # Fixed sensor thresholds (not swept)
+    sensor_thresholds: list[tuple[float, float]] = field(
+        default_factory=lambda: [(0.002, 0.002), (0.004, 0.004), (0.008, 0.008)]
+    )
+
+    # Parameter grid
+    trade_thresholds: list[float] = field(
+        default_factory=lambda: list(MS_DEFAULT_TRADE_THRESHOLDS)
+    )
+    momentum_alphas: list[float] = field(
+        default_factory=lambda: list(MS_DEFAULT_MOMENTUM_ALPHAS)
+    )
+    min_momentum_scores: list[float] = field(
+        default_factory=lambda: list(MS_DEFAULT_MIN_MOMENTUM_SCORES)
+    )
+    sl_pcts: list[float] = field(default_factory=lambda: list(MS_DEFAULT_SL_PCTS))
+    tp_pcts: list[float] = field(default_factory=lambda: list(MS_DEFAULT_TP_PCTS))
+    trail_pcts: list[float] = field(default_factory=lambda: list(MS_DEFAULT_TRAIL_PCTS))
+    min_profit_to_trail_pcts: list[float] = field(
+        default_factory=lambda: list(MS_DEFAULT_MIN_PROFIT_TO_TRAIL_PCTS)
+    )
+
+    def combinations(self) -> list[MultiScaleBacktestConfig]:
+        """Generate all MultiScaleBacktestConfig combinations from the grid."""
+        combos = []
+        for thresh, alpha, min_score, sl, tp, trail, min_trail in itertools.product(
+            self.trade_thresholds,
+            self.momentum_alphas,
+            self.min_momentum_scores,
+            self.sl_pcts,
+            self.tp_pcts,
+            self.trail_pcts,
+            self.min_profit_to_trail_pcts,
+        ):
+            combos.append(
+                MultiScaleBacktestConfig(
+                    symbol=self.symbol,
+                    sensor_thresholds=list(self.sensor_thresholds),
+                    trade_threshold=thresh,
+                    momentum_alpha=alpha,
+                    min_momentum_score=min_score,
+                    position_size_usd=self.position_size_usd,
+                    initial_stop_loss_pct=sl,
+                    initial_take_profit_pct=tp,
+                    trail_pct=trail,
+                    min_profit_to_trail_pct=min_trail,
+                    cooldown_seconds=self.cooldown_seconds,
+                    leverage=self.leverage,
+                    taker_fee_pct=self.taker_fee_pct,
+                )
+            )
+        return combos
+
+
+@dataclass
+class MultiScaleSweepResult:
+    """Result of a single multi-scale backtest config within a sweep."""
+
+    config: MultiScaleBacktestConfig
+    total_trades: int
+    wins: int
+    losses: int
+    win_rate_net: float
+    gross_pnl_usd: float
+    total_fees_usd: float
+    net_pnl_usd: float
+    profit_factor: float
+    max_drawdown_usd: float
+    net_pnl_per_day: float
+    trades_eaten_by_fees: int
+    # Multi-scale specific
+    filtered_signals: int
+    sensor_events: int
+    trade_events: int
+
+
+class MultiScaleParameterSweep:
+    """Runs a grid search over multi-scale DC strategy parameters."""
+
+    def __init__(self, sweep_config: MultiScaleSweepConfig):
+        self._config = sweep_config
+
+    def run(
+        self,
+        candles: list[dict],
+        days: float = 7.0,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> list[MultiScaleSweepResult]:
+        """Run the sweep on candle data.
+
+        Args:
+            candles: Historical candle data.
+            days: Number of days of data (for per-day calculations).
+            progress_callback: Called with (current, total) after each config.
+
+        Returns:
+            List of MultiScaleSweepResult sorted by net_pnl_usd descending.
+            Only configs with >= min_trades are included.
+        """
+        combos = self._config.combinations()
+        results: list[MultiScaleSweepResult] = []
+
+        for i, config in enumerate(combos):
+            engine = MultiScaleBacktestEngine(config)
+            bt_result = engine.run(candles, quiet=True)
+
+            if bt_result.trades and len(bt_result.trades) >= self._config.min_trades:
+                metrics = compute_metrics(bt_result.trades, bt_result.total_signals, days)
+                results.append(
+                    MultiScaleSweepResult(
+                        config=config,
+                        total_trades=metrics.total_trades,
+                        wins=metrics.wins,
+                        losses=metrics.losses,
+                        win_rate_net=metrics.win_rate_net,
+                        gross_pnl_usd=metrics.gross_pnl_usd,
+                        total_fees_usd=metrics.total_fees_usd,
+                        net_pnl_usd=metrics.net_pnl_usd,
+                        profit_factor=metrics.profit_factor,
+                        max_drawdown_usd=metrics.max_drawdown_usd,
+                        net_pnl_per_day=metrics.net_pnl_per_day,
+                        trades_eaten_by_fees=metrics.trades_eaten_by_fees,
+                        filtered_signals=bt_result.filtered_signals,
+                        sensor_events=bt_result.sensor_events,
+                        trade_events=bt_result.trade_events,
+                    )
+                )
+
+            if progress_callback:
+                progress_callback(i + 1, len(combos))
+
+        # Sort by net P&L descending
+        results.sort(key=lambda r: r.net_pnl_usd, reverse=True)
+        return results
+
+    @staticmethod
+    def format_results(results: list[MultiScaleSweepResult], top_n: int = 20) -> str:
+        """Format multi-scale sweep results as a human-readable table."""
+        if not results:
+            return "No results to display."
+
+        lines = []
+        header = (
+            f"{'Rank':>4} | {'Thresh':>6} | {'Alpha':>5} | {'MinSc':>5} | "
+            f"{'SL%':>5} | {'TP%':>5} | {'Trail':>5} | {'MinTr':>5} | "
+            f"{'Trades':>6} | {'WinR%':>5} | {'Net$':>8} | {'PF':>6} | "
+            f"{'MaxDD':>7} | {'Filt':>4} | {'$/day':>7}"
+        )
+        lines.append(header)
+        lines.append("-" * len(header))
+
+        for i, r in enumerate(results[:top_n], 1):
+            pf_str = f"{r.profit_factor:6.2f}" if r.profit_factor != float("inf") else "   inf"
+            lines.append(
+                f"{i:4d} | {r.config.trade_threshold:6.3f} | "
+                f"{r.config.momentum_alpha:5.2f} | "
+                f"{r.config.min_momentum_score:5.2f} | "
+                f"{r.config.initial_stop_loss_pct * 100:5.2f} | "
+                f"{r.config.initial_take_profit_pct * 100:5.1f} | "
+                f"{r.config.trail_pct:5.1f} | "
+                f"{r.config.min_profit_to_trail_pct:5.3f} | "
+                f"{r.total_trades:6d} | {r.win_rate_net:5.1f} | "
+                f"{r.net_pnl_usd:+8.2f} | {pf_str} | "
+                f"{r.max_drawdown_usd:7.2f} | "
+                f"{r.filtered_signals:4d} | {r.net_pnl_per_day:+7.2f}"
+            )
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def results_to_json(results: list[MultiScaleSweepResult]) -> list[dict[str, Any]]:
+        """Convert multi-scale sweep results to JSON-serializable dicts."""
+        output = []
+        for r in results:
+            pf = r.profit_factor
+            if pf == float("inf"):
+                pf = "Infinity"
+            output.append(
+                {
+                    "trade_threshold": r.config.trade_threshold,
+                    "momentum_alpha": r.config.momentum_alpha,
+                    "min_momentum_score": r.config.min_momentum_score,
+                    "sl_pct": r.config.initial_stop_loss_pct,
+                    "tp_pct": r.config.initial_take_profit_pct,
+                    "trail_pct": r.config.trail_pct,
+                    "min_profit_to_trail": r.config.min_profit_to_trail_pct,
+                    "total_trades": r.total_trades,
+                    "wins": r.wins,
+                    "losses": r.losses,
+                    "win_rate_net": round(r.win_rate_net, 2),
+                    "gross_pnl_usd": round(r.gross_pnl_usd, 4),
+                    "total_fees_usd": round(r.total_fees_usd, 4),
+                    "net_pnl_usd": round(r.net_pnl_usd, 4),
+                    "profit_factor": pf,
+                    "max_drawdown_usd": round(r.max_drawdown_usd, 4),
+                    "net_pnl_per_day": round(r.net_pnl_per_day, 4),
+                    "trades_eaten_by_fees": r.trades_eaten_by_fees,
+                    "filtered_signals": r.filtered_signals,
+                    "sensor_events": r.sensor_events,
+                    "trade_events": r.trade_events,
                 }
             )
         return output
