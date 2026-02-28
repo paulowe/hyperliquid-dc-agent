@@ -10,7 +10,7 @@ Entry rules:
 Risk management:
   - TrailingRiskManager handles SL/TP with greedy trailing
   - When in loss: SL and TP stay at initial levels
-  - When in profit: SL ratchets toward profit, TP pushes further
+  - When in profit: SL ratchets toward profit, TP stays fixed
 
 No ML model needed. The threshold itself is the prediction.
 """
