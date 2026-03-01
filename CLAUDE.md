@@ -171,25 +171,25 @@ Set in `env.sh` (see `env.sh.example`):
 Patterns for debugging Vertex AI pipelines:
 ```bash
 # Check pipeline run status
-gcloud ai custom-jobs list --region=us-central1 --project=derivatives-417104
+gcloud ai custom-jobs list --region=us-central1 --project=$PROJECT_ID
 
 # Get pipeline task states via Python SDK
 # aiplatform.PipelineJob.get(resource_name).task_details
 
 # Read pipeline logs
-gcloud logging read 'resource.type="aiplatform.googleapis.com/PipelineJob"' --project=derivatives-417104 --limit=50
+gcloud logging read 'resource.type="aiplatform.googleapis.com/PipelineJob"' --project=$PROJECT_ID --limit=50
 
 # Fetch task output from GCS
-gsutil cat "gs://derivatives-417104-pl-root/<run-id>/<task-id>/report"
+gsutil cat "gs://$PROJECT_ID-pl-root/<run-id>/<task-id>/report"
 
 # Check BQ dataset location
-bq show --format=json derivatives-417104:coindesk | jq .location
+bq show --format=json $PROJECT_ID:coindesk | jq .location
 
 # Compile pipeline (env vars must be set first)
 source env.sh && cd pipelines && uv run python -m pipelines.tensorflow.training.pipeline_ablation
 
 # Sync training script to GCS
-gsutil cp pipelines/src/pipelines/tensorflow/training/assets/tftrain_tf_fast_model.py gs://derivatives-417104-pl-assets/training/assets/
+gsutil cp pipelines/src/pipelines/tensorflow/training/assets/tftrain_tf_fast_model.py gs://$PROJECT_ID-pl-assets/training/assets/
 
 # Submit pipeline via trigger
 uv run --package dc-vae python -m pipelines.trigger.main
@@ -203,6 +203,24 @@ All experiments live in `experiments/NNN-<descriptive-name>/`. Each has:
 - `notes.md`: human-readable analysis, what we learned, link to next experiment
 
 Always record what changed from the previous experiment and why.
+
+## Runtime Environment
+
+> **Note to self:** Do not hardcode GCP project IDs. Discover at runtime:
+> `gcloud config get-value project` and `gcloud config get-value compute/region`
+
+- Trading bots and Claude Code run on Vertex AI VMs in GCP
+- Native access to GCS, BigQuery, Pub/Sub — credentials auto-discovered via ADC
+- Telemetry config in `trading-agent/.env`: GCP_PROJECT_ID, TELEMETRY_GCS_BUCKET, TELEMETRY_BQ_DATASET
+- Pipeline/script config in `env.sh`: same vars derived from VERTEX_PROJECT_ID
+
+## Telemetry
+- `--telemetry` flag on live_bridge.py / multi_scale_bridge.py enables structured NDJSON collection
+- Events buffered per table type, flushed to GCS (fallback: local `~/.cache/hyperliquid-telemetry/`)
+- 7 BQ tables: ticks, dc_events, signals, trades, fills, sessions, account_snapshots
+- `make test-telemetry` — run telemetry tests
+- `make setup-telemetry-bq` — create BQ dataset/tables (idempotent)
+- `make load-telemetry` — load GCS NDJSON into BQ
 
 ## Known Pitfalls
 
