@@ -78,6 +78,21 @@ test-multi-scale: ## Run multi-scale strategy tests
 		trading-agent/tests/backtesting/test_multi_scale_sweep.py -v
 
 # ============================================================================
+# Scaling Laws Analysis
+# ============================================================================
+
+scaling-laws: ## Analyze DC scaling laws (override: symbol, days)
+	@uv run --package hyperliquid-trading-bot python -m scaling_laws.cli \
+		--symbol $(symbol) --days $(days)
+
+scaling-laws-json: ## Scaling laws JSON output (override: symbol, days)
+	@uv run --package hyperliquid-trading-bot python -m scaling_laws.cli \
+		--symbol $(symbol) --days $(days) --json
+
+test-scaling-laws: ## Run scaling laws module tests
+	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/scaling_laws/ -v
+
+# ============================================================================
 # Trade Review
 # ============================================================================
 

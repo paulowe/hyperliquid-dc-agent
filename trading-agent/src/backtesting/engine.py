@@ -44,6 +44,9 @@ class TradeRecord:
     total_fees: float
     net_pnl_usd: float
     reason: str
+    # Intra-trade excursion from trailing RM water marks
+    max_favorable_excursion_pct: float = 0.0
+    max_adverse_excursion_pct: float = 0.0
 
 
 @dataclass
@@ -219,6 +222,9 @@ class BacktestEngine:
         entry_fee = position["entry_fee"]
         total_fees = entry_fee + exit_fee
 
+        # Extract MFE/MAE from trailing RM water marks in signal metadata
+        mfe, mae = _compute_excursions(side, entry_price, signal.metadata)
+
         return TradeRecord(
             side=side,
             entry_price=entry_price,
@@ -233,7 +239,32 @@ class BacktestEngine:
             total_fees=total_fees,
             net_pnl_usd=pnl_usd - total_fees,
             reason=reason or signal.reason,
+            max_favorable_excursion_pct=mfe,
+            max_adverse_excursion_pct=mae,
         )
+
+
+def _compute_excursions(
+    side: str, entry_price: float, metadata: dict[str, Any]
+) -> tuple[float, float]:
+    """Compute MFE/MAE from close signal water marks.
+
+    Returns (mfe_pct, mae_pct). Defaults to (0.0, 0.0) if water marks
+    are not present (e.g. reversal close signals from strategy).
+    """
+    hwm = metadata.get("high_water_mark")
+    lwm = metadata.get("low_water_mark")
+    if hwm is None or lwm is None:
+        return 0.0, 0.0
+
+    if side == "LONG":
+        mfe = (hwm - entry_price) / entry_price
+        mae = (entry_price - lwm) / entry_price
+    else:  # SHORT
+        mfe = (entry_price - lwm) / entry_price
+        mae = (hwm - entry_price) / entry_price
+
+    return max(mfe, 0.0), max(mae, 0.0)
 
 
 # ===========================================================================
@@ -448,6 +479,9 @@ class MultiScaleBacktestEngine:
         entry_fee = position["entry_fee"]
         total_fees = entry_fee + exit_fee
 
+        # Extract MFE/MAE from trailing RM water marks in signal metadata
+        mfe, mae = _compute_excursions(side, entry_price, signal.metadata)
+
         return TradeRecord(
             side=side,
             entry_price=entry_price,
@@ -462,4 +496,6 @@ class MultiScaleBacktestEngine:
             total_fees=total_fees,
             net_pnl_usd=pnl_usd - total_fees,
             reason=reason or signal.reason,
+            max_favorable_excursion_pct=mfe,
+            max_adverse_excursion_pct=mae,
         )

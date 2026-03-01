@@ -32,6 +32,83 @@ uv run --package hyperliquid-trading-bot python -m trade_review.cli \
   --symbol $ARGUMENTS --days 7 --json
 ```
 
+### Step 1b: Query BigQuery Telemetry (if available)
+
+If telemetry is enabled (`--telemetry` flag on live_bridge), richer data is available in BigQuery.
+
+**Setup**: Load env vars from `trading-agent/.env` to get `GCP_PROJECT_ID`, `TELEMETRY_BQ_DATASET`, `GCP_BQ_SERVICE_ACCOUNT`, and `GCP_DEFAULT_ACCOUNT`. Switch to the BQ service account before querying, and switch back after:
+
+```bash
+source trading-agent/.env
+gcloud config set account "$GCP_BQ_SERVICE_ACCOUNT"
+# ... run BQ queries ...
+gcloud config set account "$GCP_DEFAULT_ACCOUNT"
+```
+
+All BQ queries below use the fully-qualified table path: `` `$GCP_PROJECT_ID.$TELEMETRY_BQ_DATASET.<table>` ``
+
+**Trades table** — exact entry/exit with strategy-level reasons (not inferred from price):
+```bash
+bq query --nouse_legacy_sql --format=json "
+SELECT timestamp, event_type, side, entry_price, size, is_reversal,
+       backstop_sl_pct, backstop_tp_pct, exit_price, exit_reason
+FROM \`${GCP_PROJECT_ID}.${TELEMETRY_BQ_DATASET}.trades\`
+WHERE symbol = '<SYMBOL>'
+  AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL <HOURS> HOUR)
+ORDER BY timestamp ASC"
+```
+
+**Signals table** — every DC signal with exact trigger reason (e.g., `dc_overshoot_long: PDCC2_UP`):
+```bash
+bq query --nouse_legacy_sql --format=json "
+SELECT timestamp, signal_type, price, size, reason, is_reversal
+FROM \`${GCP_PROJECT_ID}.${TELEMETRY_BQ_DATASET}.signals\`
+WHERE symbol = '<SYMBOL>'
+  AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL <HOURS> HOUR)
+ORDER BY timestamp ASC"
+```
+
+**Fills table** — actual exchange fills with prices and sizes:
+```bash
+bq query --nouse_legacy_sql --format=json "
+SELECT timestamp, signal_type, price, size, reason
+FROM \`${GCP_PROJECT_ID}.${TELEMETRY_BQ_DATASET}.fills\`
+WHERE symbol = '<SYMBOL>'
+  AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL <HOURS> HOUR)
+ORDER BY timestamp ASC"
+```
+
+**Account snapshots** — periodic equity snapshots (note: reads from API wallet, may show $0 for delegated setups):
+```bash
+bq query --nouse_legacy_sql --format=json "
+SELECT timestamp, account_value, margin_used
+FROM \`${GCP_PROJECT_ID}.${TELEMETRY_BQ_DATASET}.account_snapshots\`
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL <HOURS> HOUR)
+ORDER BY timestamp ASC"
+```
+
+**Session inventory** — list all bot sessions and their trade counts:
+```bash
+bq query --nouse_legacy_sql --format=json "
+SELECT session_id, MIN(timestamp) as start_ts, MAX(timestamp) as end_ts, COUNT(*) as events
+FROM \`${GCP_PROJECT_ID}.${TELEMETRY_BQ_DATASET}.trades\`
+WHERE symbol = '<SYMBOL>'
+GROUP BY session_id ORDER BY start_ts DESC LIMIT 10"
+```
+
+#### BQ vs Hyperliquid API Comparison
+
+| Data Source | Pros | Cons |
+|------------|------|------|
+| **Hyperliquid API** (Step 1) | All fills from all sessions, P&L pre-calculated | Exit reasons inferred from price (not exact), includes non-bot trades |
+| **BQ Telemetry** (Step 1b) | Exact strategy reasons (`trailing_stop_loss`, `trailing_take_profit`), signal metadata, DC event type | Only available when `--telemetry` was enabled, only covers bot sessions |
+
+When BQ data is available, **always cross-reference** the exact exit reasons from BQ against the inferred reasons from the fill pairer. BQ is ground truth for:
+- Whether a trade exited via trailing SL vs fixed SL vs backstop
+- The exact DC signal that triggered entry (PDCC_Down, PDCC2_UP, etc.)
+- Whether the entry was a reversal
+- What backstop levels were set on the exchange
+
 ### Step 2: Run Backtest Sweep (Same Period)
 
 **Always** run a parameter sweep over the same time period to identify what *would* have been profitable. Use the same `--days` as Step 1.
@@ -211,12 +288,31 @@ These relationships determine profitability:
 - Fee impact: At $100 position size, round-trip fee is ~$0.07. Trades need >$0.07 profit to be net positive.
 - **Gross win rate gap**: A strategy can be 55%+ accurate and still lose money if threshold is too small
 
+## BigQuery Telemetry Reference
+
+Tables in `$GCP_PROJECT_ID.$TELEMETRY_BQ_DATASET` (env vars from `trading-agent/.env`):
+
+| Table | Key Columns | Partitioned | Clustered |
+|-------|-------------|-------------|-----------|
+| `trades` | timestamp, event_type (trade_entry/trade_exit), side, entry_price, size, exit_price, exit_reason, backstop_sl_pct, backstop_tp_pct, is_reversal | DAY(timestamp) | symbol |
+| `signals` | timestamp, signal_type (buy/sell/close), price, size, reason, is_reversal | DAY(timestamp) | symbol |
+| `fills` | timestamp, signal_type, price, size, reason | DAY(timestamp) | symbol |
+| `account_snapshots` | timestamp, account_value, margin_used, withdrawable | DAY(timestamp) | |
+| `dc_events` | timestamp, start_price, end_price, threshold_down, threshold_up, is_sensor, score, regime | DAY(timestamp) | symbol |
+| `sessions` | timestamp, session_id, event_type | DAY(timestamp) | |
+| `ticks` | timestamp, price | DAY(timestamp) | symbol |
+
+**Auth**: Use `gcloud config set account "$GCP_BQ_SERVICE_ACCOUNT"` for BQ queries. Switch back to `"$GCP_DEFAULT_ACCOUNT"` afterwards. Both env vars are in `trading-agent/.env`.
+
+**Known issue**: `account_snapshots.account_value` reads from the API wallet (not the delegated-to main wallet). For delegated setups this shows $0.00. Use the Hyperliquid API directly for accurate account value.
+
 ## Caveats
 
-- Exit reasons (SL/TP/reversal) are inferred from price movement, not from actual strategy labels
-- Fills from other strategies or manual trades on the same wallet will be included — filtered by symbol only
+- Exit reasons from Hyperliquid API fills are inferred from price movement — use BQ telemetry for exact strategy-level reasons when available
+- Fills from other strategies or manual trades on the same wallet will be included in API data — BQ telemetry only includes bot-generated trades
 - Partial fills are paired using weighted average entry price
 - This reviews closed trades only; open positions are reported separately
 - Fee calculation assumes taker fees (0.035%) — if the strategy uses limit orders, actual fees may be lower
 - The Hyperliquid API may limit the number of fills returned per request
 - Backtest results are historical and don't guarantee future performance, but threshold patterns are remarkably consistent
+- BQ telemetry is only available for sessions where `--telemetry` flag was enabled on the live bridge

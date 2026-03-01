@@ -426,3 +426,55 @@ class TestStateManagement:
         mgr = make_manager()
         status = mgr.get_status()
         assert status["has_position"] is False
+
+
+class TestCloseSignalMetadata:
+    """Close signals should include water marks for MFE/MAE tracking."""
+
+    def test_long_sl_signal_has_water_marks(self):
+        """LONG SL exit signal should contain high/low water marks."""
+        mgr = make_manager()
+        mgr.open_position("LONG", ENTRY_PRICE, 0.001)
+        # Price rises to 100100 (new high), then drops to SL at 99700
+        mgr.update(100_100.0, 1.0)
+        signals = mgr.update(99_700.0, 2.0)
+        assert len(signals) == 1
+        meta = signals[0].metadata
+        assert meta["high_water_mark"] == 100_100.0
+        assert meta["low_water_mark"] == 99_700.0
+
+    def test_long_tp_signal_has_water_marks(self):
+        """LONG TP exit signal should contain water marks."""
+        mgr = make_manager()
+        mgr.open_position("LONG", ENTRY_PRICE, 0.001)
+        # Dip then hit TP
+        mgr.update(99_900.0, 1.0)
+        signals = mgr.update(100_200.0, 2.0)
+        assert len(signals) == 1
+        meta = signals[0].metadata
+        assert meta["high_water_mark"] == 100_200.0
+        assert meta["low_water_mark"] == 99_900.0
+
+    def test_short_sl_signal_has_water_marks(self):
+        """SHORT SL exit signal should contain water marks."""
+        mgr = make_manager()
+        mgr.open_position("SHORT", ENTRY_PRICE, 0.001)
+        # Price drops to 99900 (new low), then rises to SL at 100300
+        mgr.update(99_900.0, 1.0)
+        signals = mgr.update(100_300.0, 2.0)
+        assert len(signals) == 1
+        meta = signals[0].metadata
+        assert meta["high_water_mark"] == 100_300.0
+        assert meta["low_water_mark"] == 99_900.0
+
+    def test_short_tp_signal_has_water_marks(self):
+        """SHORT TP exit signal should contain water marks."""
+        mgr = make_manager()
+        mgr.open_position("SHORT", ENTRY_PRICE, 0.001)
+        # Price rises then hits TP
+        mgr.update(100_100.0, 1.0)
+        signals = mgr.update(99_800.0, 2.0)
+        assert len(signals) == 1
+        meta = signals[0].metadata
+        assert meta["high_water_mark"] == 100_100.0
+        assert meta["low_water_mark"] == 99_800.0

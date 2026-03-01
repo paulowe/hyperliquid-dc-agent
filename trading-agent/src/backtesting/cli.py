@@ -124,6 +124,7 @@ def run_single(args: argparse.Namespace, candles: list[dict]) -> None:
                 "net_pnl_usd": round(metrics.net_pnl_usd, 4),
                 "profit_factor": metrics.profit_factor if metrics.profit_factor != float("inf") else "Infinity",
                 "max_drawdown_usd": round(metrics.max_drawdown_usd, 4),
+                "max_equity_drawdown_usd": round(metrics.max_equity_drawdown_usd, 4),
                 "net_pnl_per_day": round(metrics.net_pnl_per_day, 4),
                 "trades_eaten_by_fees": metrics.trades_eaten_by_fees,
             }
@@ -159,7 +160,7 @@ def run_single(args: argparse.Namespace, candles: list[dict]) -> None:
     print(f"  Net P&L/day:   ${metrics.net_pnl_per_day:+.2f}")
     pf_str = f"{metrics.profit_factor:.2f}" if metrics.profit_factor != float("inf") else "inf"
     print(f"  Profit factor: {pf_str}")
-    print(f"  Max drawdown:  ${metrics.max_drawdown_usd:.2f}")
+    print(f"  Max drawdown:  ${metrics.max_drawdown_usd:.2f} (realized) / ${metrics.max_equity_drawdown_usd:.2f} (equity)")
     print(f"  Avg hold:      {metrics.avg_hold_seconds:.0f}s")
     print(f"  Fee-eaten:     {metrics.trades_eaten_by_fees} trades")
     print(f"  Exits:         SL={metrics.sl_exits} TP={metrics.tp_exits} Rev={metrics.reversal_exits}")
@@ -304,6 +305,7 @@ def run_multi_scale_single(args: argparse.Namespace, candles: list[dict]) -> Non
                 "net_pnl_usd": round(metrics.net_pnl_usd, 4),
                 "profit_factor": metrics.profit_factor if metrics.profit_factor != float("inf") else "Infinity",
                 "max_drawdown_usd": round(metrics.max_drawdown_usd, 4),
+                "max_equity_drawdown_usd": round(metrics.max_equity_drawdown_usd, 4),
                 "net_pnl_per_day": round(metrics.net_pnl_per_day, 4),
                 "trades_eaten_by_fees": metrics.trades_eaten_by_fees,
             }
@@ -343,7 +345,7 @@ def run_multi_scale_single(args: argparse.Namespace, candles: list[dict]) -> Non
     print(f"  Net P&L/day:     ${metrics.net_pnl_per_day:+.2f}")
     pf_str = f"{metrics.profit_factor:.2f}" if metrics.profit_factor != float("inf") else "inf"
     print(f"  Profit factor:   {pf_str}")
-    print(f"  Max drawdown:    ${metrics.max_drawdown_usd:.2f}")
+    print(f"  Max drawdown:    ${metrics.max_drawdown_usd:.2f} (realized) / ${metrics.max_equity_drawdown_usd:.2f} (equity)")
     print(f"  Avg hold:        {metrics.avg_hold_seconds:.0f}s")
     print(f"  Fee-eaten:       {metrics.trades_eaten_by_fees} trades")
     print(f"  Exits:           SL={metrics.sl_exits} TP={metrics.tp_exits} Rev={metrics.reversal_exits}")

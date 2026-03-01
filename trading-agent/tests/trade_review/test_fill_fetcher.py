@@ -16,10 +16,23 @@ from trade_review.fill_fetcher import FillFetcher, FillFetcherConfig
 class TestFillFetcherConfig:
     @pytest.fixture(autouse=True)
     def _no_dotenv(self, monkeypatch):
-        """Prevent load_dotenv from loading real .env in all config tests."""
+        """Prevent load_dotenv from loading real .env in all config tests.
+
+        Also clear any env vars that may have leaked from other tests
+        importing modules that call load_dotenv() at import time.
+        """
         monkeypatch.setattr(
             "trade_review.fill_fetcher.load_dotenv", lambda *a, **kw: None
         )
+        # Clear all wallet/key env vars to prevent leaking real values
+        # from .env loaded by other test modules earlier in the suite.
+        for var in (
+            "MAINNET_ACCOUNT_ADDRESS", "TESTNET_ACCOUNT_ADDRESS",
+            "MAINNET_WALLET_ADDRESS", "TESTNET_WALLET_ADDRESS",
+            "HYPERLIQUID_MAINNET_PRIVATE_KEY", "HYPERLIQUID_TESTNET_PRIVATE_KEY",
+            "HYPERLIQUID_NETWORK",
+        ):
+            monkeypatch.delenv(var, raising=False)
 
     def test_from_env_mainnet(self, monkeypatch):
         monkeypatch.setenv("HYPERLIQUID_NETWORK", "mainnet")

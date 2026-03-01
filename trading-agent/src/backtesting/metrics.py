@@ -25,6 +25,7 @@ class BacktestMetrics:
     avg_loss_net_usd: float
     avg_hold_seconds: float
     max_drawdown_usd: float
+    max_equity_drawdown_usd: float  # Includes intra-trade unrealized dips (MAE)
     profit_factor: float
     trades_eaten_by_fees: int
     per_trade_avg_fee: float
@@ -73,7 +74,7 @@ def compute_metrics(
     losing_sum = abs(sum(t.net_pnl_usd for t in losses))
     profit_factor = winning_sum / losing_sum if losing_sum > 0 else float("inf")
 
-    # Max drawdown on cumulative net P&L
+    # Max drawdown on cumulative net P&L (realized exits only)
     cum_pnl = 0.0
     peak = 0.0
     max_dd = 0.0
@@ -82,6 +83,20 @@ def compute_metrics(
         peak = max(peak, cum_pnl)
         dd = peak - cum_pnl
         max_dd = max(max_dd, dd)
+
+    # Equity-aware drawdown: considers worst unrealized point (MAE) during each trade
+    cum_pnl_eq = 0.0
+    peak_eq = 0.0
+    max_equity_dd = 0.0
+    for t in trades:
+        # Worst unrealized point during this trade (before it closed)
+        worst_unrealized = -(t.max_adverse_excursion_pct * t.size * t.entry_price) - t.entry_fee
+        intra_trough = cum_pnl_eq + worst_unrealized
+        max_equity_dd = max(max_equity_dd, peak_eq - intra_trough)
+        # Trade closes at realized P&L — also check exit point
+        cum_pnl_eq += t.net_pnl_usd
+        max_equity_dd = max(max_equity_dd, peak_eq - cum_pnl_eq)
+        peak_eq = max(peak_eq, cum_pnl_eq)
 
     # Hold times
     hold_times = [t.exit_time - t.entry_time for t in trades]
@@ -107,6 +122,7 @@ def compute_metrics(
         avg_loss_net_usd=avg_loss,
         avg_hold_seconds=avg_hold,
         max_drawdown_usd=max_dd,
+        max_equity_drawdown_usd=max_equity_dd,
         profit_factor=profit_factor,
         trades_eaten_by_fees=len(fee_eaten),
         per_trade_avg_fee=total_fees / n,

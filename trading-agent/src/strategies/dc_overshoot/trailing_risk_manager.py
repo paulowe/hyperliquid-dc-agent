@@ -125,12 +125,12 @@ class TrailingRiskManager:
             self._current_sl = entry_price * (1 - self._sl_pct)
             self._current_tp = entry_price * (1 + self._tp_pct)
             self._high_water_mark = entry_price
-            self._low_water_mark = None
+            self._low_water_mark = entry_price  # track for MAE
         else:  # SHORT
             self._current_sl = entry_price * (1 + self._sl_pct)
             self._current_tp = entry_price * (1 - self._tp_pct)
             self._low_water_mark = entry_price
-            self._high_water_mark = None
+            self._high_water_mark = entry_price  # track for MAE
 
         logger.info(
             "TrailingRM: opened %s %s @ %.2f | SL=%.2f TP=%.2f",
@@ -171,6 +171,13 @@ class TrailingRiskManager:
 
     def _update_long(self, price: float, timestamp: float) -> List[TradingSignal]:
         """Update trailing levels for a LONG position."""
+        # Track both water marks before exit checks so close signal
+        # metadata always reflects the trigger price
+        if price < self._low_water_mark:
+            self._low_water_mark = price
+        if price > self._high_water_mark:
+            self._high_water_mark = price
+
         # Check SL first (price <= SL)
         if price <= self._current_sl:
             return [self._make_close_signal("stop_loss", price)]
@@ -179,18 +186,14 @@ class TrailingRiskManager:
         if price >= self._current_tp:
             return [self._make_close_signal("take_profit", price)]
 
-        # Ratchet only when price makes a new high (i.e., profitable)
-        if price > self._high_water_mark:
-            self._high_water_mark = price
-
-            # Only trail SL/TP if profit exceeds minimum threshold
-            profit_pct = (price - self._entry_price) / self._entry_price
-            if profit_pct >= self._min_profit_to_trail:
-                # Ratchet SL: lock in trail_pct of profit from entry
-                # TP stays fixed at initial level (primary profit exit)
-                new_sl = self._entry_price + (self._high_water_mark - self._entry_price) * self._trail_pct
-                self._current_sl = max(self._current_sl, new_sl)
-
+        # Ratchet SL when price is at a new high and profit exceeds threshold
+        profit_pct = (price - self._entry_price) / self._entry_price
+        if profit_pct >= self._min_profit_to_trail:
+            # Ratchet SL: lock in trail_pct of profit from entry
+            # TP stays fixed at initial level (primary profit exit)
+            new_sl = self._entry_price + (self._high_water_mark - self._entry_price) * self._trail_pct
+            if new_sl > self._current_sl:
+                self._current_sl = new_sl
                 logger.debug(
                     "TrailingRM LONG: hwm=%.2f SL=%.2f TP=%.2f",
                     self._high_water_mark, self._current_sl, self._current_tp,
@@ -200,6 +203,13 @@ class TrailingRiskManager:
 
     def _update_short(self, price: float, timestamp: float) -> List[TradingSignal]:
         """Update trailing levels for a SHORT position."""
+        # Track both water marks before exit checks so close signal
+        # metadata always reflects the trigger price
+        if price > self._high_water_mark:
+            self._high_water_mark = price
+        if price < self._low_water_mark:
+            self._low_water_mark = price
+
         # Check SL first (price >= SL for short)
         if price >= self._current_sl:
             return [self._make_close_signal("stop_loss", price)]
@@ -208,18 +218,14 @@ class TrailingRiskManager:
         if price <= self._current_tp:
             return [self._make_close_signal("take_profit", price)]
 
-        # Ratchet only when price makes a new low (i.e., profitable for short)
-        if price < self._low_water_mark:
-            self._low_water_mark = price
-
-            # Only trail SL/TP if profit exceeds minimum threshold
-            profit_pct = (self._entry_price - price) / self._entry_price
-            if profit_pct >= self._min_profit_to_trail:
-                # Ratchet SL down: lock in trail_pct of profit from entry
-                # TP stays fixed at initial level (primary profit exit)
-                new_sl = self._entry_price - (self._entry_price - self._low_water_mark) * self._trail_pct
-                self._current_sl = min(self._current_sl, new_sl)
-
+        # Ratchet SL when price is at a new low and profit exceeds threshold
+        profit_pct = (self._entry_price - price) / self._entry_price
+        if profit_pct >= self._min_profit_to_trail:
+            # Ratchet SL down: lock in trail_pct of profit from entry
+            # TP stays fixed at initial level (primary profit exit)
+            new_sl = self._entry_price - (self._entry_price - self._low_water_mark) * self._trail_pct
+            if new_sl < self._current_sl:
+                self._current_sl = new_sl
                 logger.debug(
                     "TrailingRM SHORT: lwm=%.2f SL=%.2f TP=%.2f",
                     self._low_water_mark, self._current_sl, self._current_tp,
@@ -242,6 +248,8 @@ class TrailingRiskManager:
                 "pnl_pct": pnl_pct,
                 "sl_level": self._current_sl,
                 "tp_level": self._current_tp,
+                "high_water_mark": self._high_water_mark,
+                "low_water_mark": self._low_water_mark,
             },
         )
 
@@ -259,6 +267,14 @@ class TrailingRiskManager:
         if not self.has_position:
             return {"has_position": False}
 
+        # MFE/MAE: max favorable/adverse excursion as fraction of entry price
+        if self._side == "LONG":
+            mfe = (self._high_water_mark - self._entry_price) / self._entry_price
+            mae = (self._entry_price - self._low_water_mark) / self._entry_price
+        else:  # SHORT
+            mfe = (self._entry_price - self._low_water_mark) / self._entry_price
+            mae = (self._high_water_mark - self._entry_price) / self._entry_price
+
         return {
             "has_position": True,
             "side": self._side,
@@ -268,4 +284,6 @@ class TrailingRiskManager:
             "current_tp": self._current_tp,
             "high_water_mark": self._high_water_mark,
             "low_water_mark": self._low_water_mark,
+            "max_favorable_excursion_pct": mfe,
+            "max_adverse_excursion_pct": mae,
         }

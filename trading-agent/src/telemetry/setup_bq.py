@@ -94,6 +94,7 @@ TABLE_SCHEMAS: dict[str, list[bigquery.SchemaField]] = {
         bigquery.SchemaField("symbol", "STRING"),
         bigquery.SchemaField("event_type", "STRING"),
         bigquery.SchemaField("bridge_type", "STRING"),
+        bigquery.SchemaField("trade_id", "STRING"),  # UUID linking entry ↔ exit
         # TRADE_ENTRY fields
         bigquery.SchemaField("side", "STRING"),
         bigquery.SchemaField("entry_price", "FLOAT64"),
@@ -101,11 +102,20 @@ TABLE_SCHEMAS: dict[str, list[bigquery.SchemaField]] = {
         bigquery.SchemaField("is_reversal", "BOOL"),
         bigquery.SchemaField("backstop_sl_pct", "FLOAT64"),
         bigquery.SchemaField("backstop_tp_pct", "FLOAT64"),
+        # DC context at entry
+        bigquery.SchemaField("dc_event_type", "STRING"),
+        bigquery.SchemaField("dc_start_price", "FLOAT64"),
+        bigquery.SchemaField("dc_end_price", "FLOAT64"),
+        bigquery.SchemaField("dc_duration_s", "FLOAT64"),
+        bigquery.SchemaField("dc_threshold", "FLOAT64"),
         # TRADE_EXIT fields
         bigquery.SchemaField("exit_price", "FLOAT64"),
         bigquery.SchemaField("exit_reason", "STRING"),
         bigquery.SchemaField("sl_at_exit", "FLOAT64"),
         bigquery.SchemaField("tp_at_exit", "FLOAT64"),
+        bigquery.SchemaField("max_favorable_excursion_pct", "FLOAT64"),
+        bigquery.SchemaField("max_adverse_excursion_pct", "FLOAT64"),
+        bigquery.SchemaField("trade_duration_s", "FLOAT64"),
         # Multi-scale fields (null for single-scale)
         bigquery.SchemaField("momentum_score", "FLOAT64"),
         bigquery.SchemaField("regime", "STRING"),

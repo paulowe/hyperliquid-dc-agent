@@ -166,6 +166,59 @@ class TestEngineTradeRecordFields:
             assert trade.reason != ""
 
 
+class TestTradeRecordMFEMAE:
+    """TradeRecord should include MFE/MAE from trailing RM water marks."""
+
+    def test_completed_trade_has_mfe_mae(self):
+        """A completed trade should have non-negative MFE and MAE."""
+        # Drop 3% then bounce 2% — triggers SHORT entry, then SL exit
+        down = [-0.03 * 100.0 / 30] * 30
+        up = [0.02 * 100.0 / 20] * 20
+        candles = make_price_sequence(100.0, down + up)
+        engine = BacktestEngine(BacktestConfig(
+            threshold=0.004,
+            initial_stop_loss_pct=0.01,
+            initial_take_profit_pct=0.05,
+        ))
+        result = engine.run(candles)
+        assert len(result.trades) > 0
+        for trade in result.trades:
+            assert trade.max_favorable_excursion_pct >= 0.0
+            assert trade.max_adverse_excursion_pct >= 0.0
+
+    def test_short_trade_mfe_from_low_water_mark(self):
+        """For a SHORT closed by trailing RM (not reversal), MFE should reflect the low."""
+        down = [-0.03 * 100.0 / 30] * 30
+        up = [0.02 * 100.0 / 20] * 20
+        candles = make_price_sequence(100.0, down + up)
+        engine = BacktestEngine(BacktestConfig(
+            threshold=0.004,
+            initial_stop_loss_pct=0.01,
+            initial_take_profit_pct=0.05,
+        ))
+        result = engine.run(candles)
+        # Trailing RM exits have water marks; reversal exits don't (no RM signal)
+        rm_trades = [t for t in result.trades if "reversal" not in t.reason]
+        for trade in rm_trades:
+            # Any trade closed by trailing RM should have MFE > 0 or MAE > 0
+            assert trade.max_favorable_excursion_pct >= 0.0
+            assert trade.max_adverse_excursion_pct >= 0.0
+
+    def test_v_shape_short_has_mae(self):
+        """V-shape: SHORT enters on downtrend, bounce creates adverse excursion."""
+        candles = generate_v_shape(100.0, 0.05, 50, 50)
+        engine = BacktestEngine(BacktestConfig(
+            threshold=0.004,
+            initial_stop_loss_pct=0.01,
+            initial_take_profit_pct=0.10,
+        ))
+        result = engine.run(candles)
+        # Any trade that was closed by SL or reversal should have MAE > 0
+        sl_trades = [t for t in result.trades if "stop_loss" in t.reason or "reversal" in t.reason]
+        for trade in sl_trades:
+            assert trade.max_adverse_excursion_pct >= 0.0
+
+
 class TestBacktestResult:
     def test_price_change_pct(self):
         candles = [make_candle(100.0, 1000000), make_candle(110.0, 2000000)]

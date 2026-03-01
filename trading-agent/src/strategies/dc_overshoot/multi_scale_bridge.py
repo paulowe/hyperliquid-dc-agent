@@ -26,6 +26,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import NamedTuple
 
@@ -658,6 +659,8 @@ async def main():
     trade_count = 0
     backstop_sl_oid = None
     backstop_tp_oid = None
+    current_trade_id = None  # UUID linking TRADE_ENTRY ↔ TRADE_EXIT
+    trade_entry_time = None  # Epoch seconds when current trade opened
     signal_log = []
     start_time = time.time()
     end_time = start_time + args.duration * 60 if args.duration > 0 else float("inf")
@@ -835,8 +838,14 @@ async def main():
                                             backstop_size, args.backstop_tp_pct,
                                         )
 
-                                        # Emit TRADE_ENTRY with momentum data
+                                        # Emit TRADE_ENTRY with momentum data + DC context
+                                        current_trade_id = uuid.uuid4().hex[:12]
+                                        trade_entry_time = time.time()
+                                        dc_event = signal.metadata.get("dc_event", {})
+                                        dc_st = dc_event.get("start_time")
+                                        dc_et = dc_event.get("end_time")
                                         telem.emit(EventType.TRADE_ENTRY, {
+                                            "trade_id": current_trade_id,
                                             "side": side,
                                             "entry_price": price,
                                             "size": backstop_size,
@@ -845,17 +854,29 @@ async def main():
                                             "regime": signal.metadata.get("regime"),
                                             "backstop_sl_pct": args.backstop_sl_pct,
                                             "backstop_tp_pct": args.backstop_tp_pct,
+                                            "dc_event_type": dc_event.get("event_type"),
+                                            "dc_start_price": dc_event.get("start_price"),
+                                            "dc_end_price": dc_event.get("end_price"),
+                                            "dc_duration_s": (dc_et - dc_st) if dc_st and dc_et else None,
+                                            "dc_threshold": dc_event.get("threshold_down") or dc_event.get("threshold_up"),
                                         })
 
                                     elif signal.signal_type == SignalType.CLOSE:
-                                        # Emit TRADE_EXIT with risk manager state
+                                        # Emit TRADE_EXIT with risk manager state + MFE/MAE
                                         rm_state = strategy._trailing_rm.get_status()
                                         telem.emit(EventType.TRADE_EXIT, {
+                                            "trade_id": current_trade_id,
                                             "exit_price": price,
                                             "exit_reason": signal.reason,
+                                            "entry_price": rm_state.get("entry_price"),
                                             "sl_at_exit": rm_state.get("current_sl"),
                                             "tp_at_exit": rm_state.get("current_tp"),
+                                            "max_favorable_excursion_pct": rm_state.get("max_favorable_excursion_pct"),
+                                            "max_adverse_excursion_pct": rm_state.get("max_adverse_excursion_pct"),
+                                            "trade_duration_s": (time.time() - trade_entry_time) if trade_entry_time else None,
                                         })
+                                        current_trade_id = None
+                                        trade_entry_time = None
 
                         # Account snapshot every ~3600 ticks (~1 hour)
                         if adapter and tick_count % 3600 == 0:
