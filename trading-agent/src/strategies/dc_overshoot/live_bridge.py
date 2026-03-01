@@ -46,6 +46,8 @@ load_dotenv(_SRC_DIR.parent / ".env", override=True)
 from strategies.dc_overshoot.dc_overshoot_strategy import DCOvershootStrategy
 from interfaces.strategy import MarketData, SignalType
 from interfaces.exchange import Order, OrderSide, OrderType
+from telemetry.collector import NullCollector, TelemetryCollector
+from telemetry.events import EventType
 
 logging.basicConfig(
     level=logging.INFO,
@@ -160,6 +162,14 @@ def parse_args():
     parser.add_argument(
         "--validate", action="store_true",
         help="Validate config for safety/profitability and exit (no trading)",
+    )
+    parser.add_argument(
+        "--telemetry", action="store_true",
+        help="Enable structured telemetry (writes NDJSON to ~/.cache/hyperliquid-telemetry/)",
+    )
+    parser.add_argument(
+        "--telemetry-dir", type=str, default=None,
+        help="Custom telemetry output directory",
     )
     return parser.parse_args()
 
@@ -636,6 +646,22 @@ async def main():
     strategy = DCOvershootStrategy(config)
     strategy.start()
 
+    # Initialize telemetry collector
+    if args.telemetry:
+        telem = TelemetryCollector(
+            symbol=symbol,
+            bridge_type="single_scale",
+            local_dir=Path(args.telemetry_dir) if args.telemetry_dir else None,
+        )
+        logger.info("Telemetry enabled (session=%s)", telem.session_id)
+    else:
+        telem = NullCollector()
+
+    # Register DC event callback for telemetry
+    strategy.set_dc_event_callback(
+        lambda event: telem.emit(EventType.DC_EVENT, event)
+    )
+
     logger.info("=" * 70)
     logger.info("DC Overshoot Live Bridge")
     logger.info("=" * 70)
@@ -650,6 +676,16 @@ async def main():
     logger.info("Backstop TP: %.1f%% (hard TP on exchange)", args.backstop_tp_pct * 100)
     logger.info("Duration   : %s", f"{args.duration} minutes" if args.duration > 0 else "unlimited (Ctrl+C to stop)")
     logger.info("=" * 70)
+
+    # Emit session start event with full config
+    telem.emit(EventType.SESSION_START, {
+        "config": config,
+        "network": network,
+        "observe_only": args.observe_only,
+        "leverage": args.leverage,
+        "backstop_sl_pct": args.backstop_sl_pct,
+        "backstop_tp_pct": args.backstop_tp_pct,
+    })
 
     # Connect adapter (unless observe-only)
     adapter = None
@@ -715,6 +751,12 @@ async def main():
             logger.info("=" * 40)
             logger.info("RECONNECT #%d — reconciling state...", reconnect_count)
             logger.info("=" * 40)
+            telem.emit(EventType.RECONNECT, {
+                "reconnect_number": reconnect_count,
+                "tick_count": tick_count,
+                "signal_count": signal_count,
+                "trade_count": trade_count,
+            })
             backstop_oids = await reconcile_on_reconnect(
                 adapter, strategy, symbol,
                 BackstopOids(sl_oid=backstop_sl_oid, tp_oid=backstop_tp_oid),
@@ -767,6 +809,9 @@ async def main():
                         ts = time.time()
                         tick_count += 1
 
+                        # Emit tick telemetry
+                        telem.emit(EventType.TICK, {"price": price})
+
                         # Feed tick to strategy
                         md = MarketData(
                             asset=symbol, price=price, volume_24h=0.0, timestamp=ts,
@@ -790,6 +835,15 @@ async def main():
                                 "*** SIGNAL #%d: %s %s | price=%.2f | reason=%s",
                                 signal_count, signal.signal_type.value, symbol, price, signal.reason,
                             )
+
+                            # Emit signal telemetry
+                            telem.emit(EventType.SIGNAL, {
+                                "signal_type": signal.signal_type.value,
+                                "price": price,
+                                "size": signal.size,
+                                "reason": signal.reason,
+                                "is_reversal": signal.metadata.get("reversal", False),
+                            })
 
                             # Accumulate for --json-report
                             if args.json_report:
@@ -823,6 +877,15 @@ async def main():
                                 ok = await execute_signal(adapter, signal, price)
                                 if ok:
                                     trade_count += 1
+
+                                    # Emit FILL for every execution
+                                    telem.emit(EventType.FILL, {
+                                        "signal_type": signal.signal_type.value,
+                                        "price": price,
+                                        "size": signal.size,
+                                        "reason": signal.reason,
+                                    })
+
                                     # On entry fill: notify strategy + place backstops
                                     if signal.signal_type in (SignalType.BUY, SignalType.SELL):
                                         strategy.on_trade_executed(signal, price, signal.size)
@@ -837,6 +900,40 @@ async def main():
                                             adapter, symbol, side, price,
                                             backstop_size, args.backstop_tp_pct,
                                         )
+
+                                        # Emit TRADE_ENTRY
+                                        telem.emit(EventType.TRADE_ENTRY, {
+                                            "side": side,
+                                            "entry_price": price,
+                                            "size": backstop_size,
+                                            "is_reversal": signal.metadata.get("reversal", False),
+                                            "backstop_sl_pct": args.backstop_sl_pct,
+                                            "backstop_tp_pct": args.backstop_tp_pct,
+                                        })
+
+                                    elif signal.signal_type == SignalType.CLOSE:
+                                        # Emit TRADE_EXIT with risk manager state
+                                        rm_state = strategy._trailing_rm.get_status()
+                                        telem.emit(EventType.TRADE_EXIT, {
+                                            "exit_price": price,
+                                            "exit_reason": signal.reason,
+                                            "sl_at_exit": rm_state.get("current_sl"),
+                                            "tp_at_exit": rm_state.get("current_tp"),
+                                        })
+
+                        # Account snapshot every ~3600 ticks (~1 hour)
+                        if adapter and tick_count % 3600 == 0:
+                            try:
+                                query_addr = account_address or adapter.exchange.wallet.address
+                                snap_state = adapter.info.user_state(query_addr)
+                                snap_margin = snap_state.get("marginSummary", {})
+                                telem.emit(EventType.ACCOUNT_SNAPSHOT, {
+                                    "account_value": float(snap_margin.get("accountValue", 0)),
+                                    "margin_used": float(snap_margin.get("totalMarginUsed", 0)),
+                                    "withdrawable": float(snap_margin.get("totalRawUsd", 0)),
+                                })
+                            except Exception:
+                                pass  # Telemetry must never crash the bot
 
                         # Status log every 100 ticks
                         if tick_count % 100 == 0:
@@ -904,6 +1001,20 @@ async def main():
 
     # Final summary
     elapsed = time.time() - start_time
+
+    status = strategy.get_status()
+
+    # Emit session end event with summary
+    telem.emit(EventType.SESSION_END, {
+        "duration_seconds": elapsed,
+        "tick_count": tick_count,
+        "signal_count": signal_count,
+        "trade_count": trade_count,
+        "dc_event_count": status["dc_event_count"],
+        "reconnect_count": reconnect_count,
+    })
+    telem.close()
+
     logger.info("=" * 70)
     logger.info("Session complete")
     logger.info("=" * 70)
@@ -912,8 +1023,6 @@ async def main():
     logger.info("DC signals  : %d", signal_count)
     logger.info("Trades      : %d", trade_count)
     logger.info("Reconnects  : %d", reconnect_count)
-
-    status = strategy.get_status()
     logger.info("DC events   : %d", status["dc_event_count"])
     logger.info("Trailing RM : %s", status["trailing_rm"])
 

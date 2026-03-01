@@ -96,6 +96,19 @@ test-trade-review: ## Run trade review module tests
 	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/trade_review/ -v
 
 # ============================================================================
+# Telemetry
+# ============================================================================
+
+test-telemetry: ## Run telemetry module tests
+	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/telemetry/ -v
+
+setup-telemetry-bq: ## Create BigQuery dataset and tables for telemetry (idempotent)
+	@uv run --package hyperliquid-trading-bot python -m telemetry.setup_bq
+
+load-telemetry: ## Load telemetry NDJSON from GCS into BigQuery
+	@uv run --package hyperliquid-trading-bot python -m telemetry.load_to_bq
+
+# ============================================================================
 # Vertex AI Pipelines
 # ============================================================================
 

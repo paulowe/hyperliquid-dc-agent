@@ -57,11 +57,18 @@ class DCOvershootStrategy(TradingStrategy):
             min_profit_to_trail_pct=self._cfg.min_profit_to_trail_pct,
         )
 
+        # Optional telemetry callback: f(event_dict) -> None
+        self._on_dc_event = None
+
         # Counters
         self._tick_count = 0
         self._dc_event_count = 0
         self._trade_count = 0
         self._last_entry_time = 0.0
+
+    def set_dc_event_callback(self, callback) -> None:
+        """Register a callback invoked on every DC event (for telemetry)."""
+        self._on_dc_event = callback
 
     def generate_signals(
         self, market_data: MarketData, positions: List[Position], balance: float
@@ -92,6 +99,13 @@ class DCOvershootStrategy(TradingStrategy):
         for event in dc_events:
             self._dc_event_count += 1
             event_type = event["event_type"]
+
+            # Fire telemetry callback if registered
+            if self._on_dc_event is not None:
+                try:
+                    self._on_dc_event(event)
+                except Exception:
+                    pass  # Telemetry must never crash strategy
 
             if self._cfg.log_events:
                 logger.info(

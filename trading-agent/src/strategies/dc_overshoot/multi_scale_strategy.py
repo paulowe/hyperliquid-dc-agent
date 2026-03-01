@@ -63,6 +63,9 @@ class MultiScaleDCStrategy(TradingStrategy):
         self._sensor_keys = self._cfg.sensor_threshold_keys()
         self._trade_key = self._cfg.trade_threshold_key()
 
+        # Optional telemetry callback: f(event_dict) -> None
+        self._on_dc_event = None
+
         # Counters
         self._tick_count = 0
         self._sensor_event_count = 0
@@ -70,6 +73,10 @@ class MultiScaleDCStrategy(TradingStrategy):
         self._filtered_count = 0  # Trade signals blocked by momentum filter
         self._trade_count = 0
         self._last_entry_time = 0.0
+
+    def set_dc_event_callback(self, callback) -> None:
+        """Register a callback invoked on every DC event (for telemetry)."""
+        self._on_dc_event = callback
 
     def generate_signals(
         self, market_data: MarketData, positions: List[Position], balance: float
@@ -111,6 +118,14 @@ class MultiScaleDCStrategy(TradingStrategy):
                 continue
 
             direction = +1 if event_type == "PDCC2_UP" else -1
+
+            # Fire telemetry callback if registered
+            if self._on_dc_event is not None:
+                try:
+                    is_sensor = threshold_key in self._sensor_keys
+                    self._on_dc_event({**event, "is_sensor": is_sensor})
+                except Exception:
+                    pass  # Telemetry must never crash strategy
 
             if threshold_key in self._sensor_keys:
                 # Sensor event → update momentum scorer
