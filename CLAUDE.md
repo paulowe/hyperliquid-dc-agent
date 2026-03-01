@@ -204,20 +204,6 @@ All experiments live in `experiments/NNN-<descriptive-name>/`. Each has:
 
 Always record what changed from the previous experiment and why.
 
-## Runtime Environment
-- Trading bots and Claude Code run on Vertex AI VMs in GCP project `derivatives-417104` (us-central1)
-- Native access to GCS, BigQuery, Pub/Sub — credentials auto-discovered via ADC
-- Telemetry config in `trading-agent/.env`: GCP_PROJECT_ID, TELEMETRY_GCS_BUCKET, TELEMETRY_BQ_DATASET
-- Pipeline/script config in `env.sh`: same vars derived from VERTEX_PROJECT_ID
-
-## Telemetry
-- `--telemetry` flag on live_bridge.py / multi_scale_bridge.py enables structured NDJSON collection
-- Events buffered per table type, flushed to GCS (fallback: local `~/.cache/hyperliquid-telemetry/`)
-- 7 BQ tables: ticks, dc_events, signals, trades, fills, sessions, account_snapshots
-- `make test-telemetry` — run telemetry tests
-- `make setup-telemetry-bq` — create BQ dataset/tables (idempotent)
-- `make load-telemetry` — load GCS NDJSON into BQ
-
 ## Known Pitfalls
 
 - KFP `packages_to_install`: each item is a separate `pip install` — use `"setuptools>=69.0.0"` not `"--upgrade", "pip", "setuptools"`
