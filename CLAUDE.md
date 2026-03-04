@@ -65,6 +65,13 @@ make backtest-sweep symbol=ETH days=14          # Sweep for different symbol/per
 make test-backtest                              # Run backtesting module tests
 ```
 
+### DC Adaptive Strategy
+```bash
+make backtest-adaptive symbol=HYPE days=3          # Compare DC Adaptive vs DC Overshoot
+make backtest-adaptive-json symbol=HYPE days=7     # JSON comparison output
+make test-adaptive                                 # Run DC Adaptive tests (50 tests)
+```
+
 ### Trade Review
 ```bash
 make review-trades                                 # Review last 24h of HYPE trades

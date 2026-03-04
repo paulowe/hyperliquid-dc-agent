@@ -78,6 +78,32 @@ test-multi-scale: ## Run multi-scale strategy tests
 		trading-agent/tests/backtesting/test_multi_scale_sweep.py -v
 
 # ============================================================================
+# DC Adaptive Strategy
+# ============================================================================
+
+sensor_threshold ?= 0.004
+lookback_seconds ?= 600
+choppy_rate ?= 4.0
+trending_consistency ?= 0.6
+tp_fraction ?= 0.8
+min_tp_pct ?= 0.003
+os_window ?= 20
+os_min_samples ?= 5
+max_losses ?= 3
+cooldown_seconds ?= 300
+
+backtest-adaptive: ## Compare DC Adaptive vs DC Overshoot (override: symbol, days)
+	@uv run --package hyperliquid-trading-bot python -m strategies.dc_adaptive.backtest_compare \
+		--symbol $(symbol) --days $(days)
+
+backtest-adaptive-json: ## Compare DC Adaptive vs DC Overshoot with JSON output (override: symbol, days)
+	@uv run --package hyperliquid-trading-bot python -m strategies.dc_adaptive.backtest_compare \
+		--symbol $(symbol) --days $(days) --json
+
+test-adaptive: ## Run DC Adaptive strategy tests
+	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/strategies/dc_adaptive/ -v
+
+# ============================================================================
 # Scaling Laws Analysis
 # ============================================================================
 

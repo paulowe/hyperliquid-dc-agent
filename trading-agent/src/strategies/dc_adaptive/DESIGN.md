@@ -216,23 +216,117 @@ trading-agent/tests/strategies/dc_adaptive/
 | leverage | 10 | Position leverage |
 | position_size_usd | 50 | Position size in USD |
 
-## Expected Improvements
+## Backtest Results (HYPE, Mar 2026)
 
-Based on Mar 1-4 HYPE data:
-- **Regime filter** would have blocked ~15 of the 26 reversal-close losses
-  (those during high-rate choppy periods), saving ~$13
-- **Adaptive TP** at ~0.64% instead of 1.5% would have captured more
-  take-profit exits (from 29 to ~35), adding ~$2
-- **Loss streak guard** would have prevented ~5 trades during the two
-  major loss streaks, saving ~$3
+### 3-day comparison (same candles, same core params)
 
-Combined estimated improvement: $18+ savings on a $12.64 loss = net positive.
+| Metric | DC Overshoot | DC Adaptive |
+|--------|-------------|-------------|
+| Total trades | 46 | 46 |
+| Win rate | 63% | **76%** |
+| SL exits | 12 | **2** |
+| TP exits | 24 | **34** |
+| Reversal exits | 10 | 10 |
+| Net P&L | $0.01 | **$0.19** |
+| Profit factor | 1.00 | 1.02 |
 
-## Test Strategy
+**Key insight**: The adaptive TP is the biggest win — it converts would-be
+SL losses into TP wins by setting realistic exit targets based on observed
+overshoot magnitudes. SL exits dropped from 12 to 2 (83% reduction).
 
-TDD approach — write tests before implementation:
+### 7-day comparison
 
-1. **Unit tests** for each guard component (regime, overshoot, loss streak)
-2. **Integration test** for full strategy signal flow
-3. **Backtest comparison** against baseline DC Overshoot on same data
-4. **Edge case tests** (empty data, single tick, no DC events, etc.)
+Both strategies slightly negative over 7 days (choppy HYPE market). The
+adaptive strategy had 76.9% win rate vs 63.5% baseline, but the tighter
+adaptive TP reduced gross profit per trade.
+
+### Overshoot distribution (from tracker)
+
+- p50: 0.215%
+- p75: 0.422%
+- Samples: 20
+
+Adaptive TP settled at ~0.3% (0.215% × 0.8 = 0.172%, floored at min_tp 0.3%).
+
+## Usage
+
+### Live trading
+
+```bash
+# Launch with recommended HYPE parameters
+screen -S hype bash -c 'uv run --package hyperliquid-trading-bot python \
+  -m strategies.dc_adaptive.adaptive_bridge \
+  --symbol HYPE --threshold 0.015 \
+  --sensor-threshold 0.004 \
+  --position-size 50 \
+  --sl-pct 0.02 --tp-pct 0.005 \
+  --trail-pct 0.3 --min-profit-to-trail-pct 0.003 \
+  --backstop-sl-pct 0.05 --backstop-tp-pct 0.05 --leverage 10 \
+  --telemetry --yes 2>&1 | tee /tmp/hype_adaptive.log'
+
+# Observe only (no trades, no --yes needed)
+uv run --package hyperliquid-trading-bot python \
+  -m strategies.dc_adaptive.adaptive_bridge \
+  --symbol HYPE --observe-only --duration 60
+```
+
+### Backtesting
+
+```bash
+# Compare DC Adaptive vs DC Overshoot
+make backtest-adaptive symbol=HYPE days=3
+
+# JSON output for analysis
+make backtest-adaptive-json symbol=HYPE days=7
+```
+
+### Testing
+
+```bash
+make test-adaptive    # 50 tests across 4 test files
+```
+
+## Design Decisions
+
+### Why overshoot is measured as net V displacement (not true extreme)
+
+The tracker measures the price displacement between two consecutive opposite
+DC confirmations — the full "V shape" from DC Down confirmation to DC Up
+confirmation (or vice versa). This is the net displacement, not the maximum
+extension to the extreme point.
+
+This is intentionally conservative. The true extreme (bottom of the V) is only
+known in hindsight and can't be captured in real trading. The net V displacement
+represents a reliably achievable price level. Setting TP at 80% of this
+conservative measurement ensures TPs are actually hit, producing higher win rates.
+
+Backtesting confirmed: TP=0.5% (conservative) was the only breakeven setting.
+TP=1.0% lost $1.56, TP=1.5% lost $2.42. Lower, more achievable TPs win.
+
+### Why overshoots are tracked in a single pool (not per-direction)
+
+The tracker combines both upward and downward overshoots into one pool rather
+than maintaining separate per-direction medians. Reasons:
+
+1. **Sample size**: At threshold=0.015, HYPE produces ~7 overshoots/day total.
+   Splitting halves this to ~3.5/direction, too few for a stable median.
+2. **Conservative bias**: Combined averaging pulls the median toward the smaller
+   direction, producing lower TPs — which we've shown works better.
+3. **HYPE is mostly symmetric**: Mar 1-3 data showed 32 UP vs 32 DOWN DC events.
+4. **Regime detector covers asymmetry**: Trending markets (where directional
+   asymmetry matters) are already detected by the RegimeDetector.
+
+This may be revisited if telemetry data shows significant directional asymmetry.
+
+## Test Coverage
+
+50 tests across 4 test files (TDD — tests written before implementation):
+
+- `test_regime_detector.py` — 15 tests: quiet/choppy/trending/neutral regimes,
+  lookback purge, event rate computation
+- `test_overshoot_tracker.py` — 12 tests: adaptive TP, median computation,
+  rolling window eviction, percentiles
+- `test_loss_streak_guard.py` — 11 tests: win resets, cooldown activation,
+  duration escalation, expiry, status
+- `test_dc_adaptive_strategy.py` — 12 tests: init, entry signals, regime gating,
+  loss streak gating, adaptive TP, trade execution, lifecycle
