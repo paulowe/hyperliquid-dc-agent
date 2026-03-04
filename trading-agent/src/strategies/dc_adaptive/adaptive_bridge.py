@@ -597,7 +597,9 @@ async def main():
         sys.exit(1)
 
     # Get wallet address for delegation
-    account_address = os.environ.get(net_cfg["wallet_env"], "")
+    # MAINNET_ACCOUNT_ADDRESS is the delegated-to main wallet (has the funds)
+    # MAINNET_WALLET_ADDRESS is a legacy alias — check both
+    account_address = os.environ.get("MAINNET_ACCOUNT_ADDRESS", "") or os.environ.get(net_cfg["wallet_env"], "")
 
     # Mainnet safety confirmation
     if network == "mainnet" and not args.observe_only and not args.yes:
