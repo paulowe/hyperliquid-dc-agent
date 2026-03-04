@@ -178,7 +178,7 @@ def main():
         # Overshoot tracker
         "os_window_size": 20,
         "os_min_samples": 5,
-        "tp_fraction": 0.8,
+        "tp_fraction": 0.4,
         "min_tp_pct": 0.003,
         "default_tp_pct": 0.005,
         # Loss streak guard

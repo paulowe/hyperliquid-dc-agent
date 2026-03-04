@@ -78,7 +78,7 @@ This would have prevented the 26 reversal losses from Mar 1-4.
 adaptive_tp = max(p50(recent_overshoots) * tp_fraction, min_tp)
 ```
 Where:
-- `tp_fraction` = 0.8 (target 80% of median, so >50% of trades reach it)
+- `tp_fraction` = 0.4 (target 40% of median — conservative, ensures TP is reachable)
 - `min_tp` = 0.003 (floor at 0.3% to always cover fees)
 
 **How overshoots are measured**:
@@ -89,14 +89,14 @@ Where:
   $98, then reverses 1.5% up (DC up confirmed at $99.47). The overshoot
   from the down DC was ($99 - $98) / $99 = 1.01%.
 
-**Impact**: On HYPE (Mar 1-4), median overshoot was 0.8%. Adaptive TP would
-have been ~0.64% vs fixed 1.5% — significantly more reachable.
+**Impact**: On HYPE (Mar 1-4), trade-threshold median overshoot is ~1.25%.
+Adaptive TP = 1.25% × 0.4 = ~0.5%, matching the optimal fixed TP from backtests.
 
 **Parameters**:
 - `window_size`: Number of recent overshoots to track (default: 20)
 - `min_samples`: Minimum overshoots before adapting (default: 5, use
   default_tp_pct until then)
-- `tp_fraction`: Fraction of median overshoot to use as TP (default: 0.8)
+- `tp_fraction`: Fraction of median overshoot to use as TP (default: 0.4)
 - `min_tp_pct`: Floor for adaptive TP (default: 0.003)
 - `default_tp_pct`: TP to use before enough samples (default: 0.005)
 
@@ -201,7 +201,7 @@ trading-agent/tests/strategies/dc_adaptive/
 | sensor_threshold | 0.004 | DC threshold for regime sensing |
 | sl_pct | 0.02 | Initial stop loss (wider than threshold) |
 | default_tp_pct | 0.005 | TP before adaptive kicks in |
-| tp_fraction | 0.8 | Fraction of median overshoot for TP |
+| tp_fraction | 0.4 | Fraction of median overshoot for TP |
 | min_tp_pct | 0.003 | Floor for adaptive TP |
 | trail_pct | 0.3 | Trailing SL lock-in fraction |
 | min_profit_to_trail_pct | 0.003 | Min profit before trailing |

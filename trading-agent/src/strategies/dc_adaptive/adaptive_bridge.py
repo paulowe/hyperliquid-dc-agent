@@ -167,8 +167,8 @@ def parse_args():
 
     # --- Overshoot tracker parameters ---
     parser.add_argument(
-        "--tp-fraction", type=float, default=0.8,
-        help="Fraction of median overshoot to use as adaptive TP (default: 0.8)",
+        "--tp-fraction", type=float, default=0.4,
+        help="Fraction of median overshoot to use as adaptive TP (default: 0.4)",
     )
     parser.add_argument(
         "--min-tp-pct", type=float, default=0.003,

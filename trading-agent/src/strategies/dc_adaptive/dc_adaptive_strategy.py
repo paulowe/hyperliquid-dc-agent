@@ -130,18 +130,18 @@ class DCAdaptiveStrategy(TradingStrategy):
                 except Exception:
                     pass
 
-            # Track overshoots from ALL DC events (sensor + trade)
-            if event_type in ("PDCC_Down", "PDCC2_UP"):
-                self._track_overshoot(event, price)
-
             # Sensor events feed the regime detector
             if threshold_key == self._sensor_key:
                 if event_type == "PDCC2_UP":
                     self._regime.record_event(+1, ts)
                 elif event_type == "PDCC_Down":
                     self._regime.record_event(-1, ts)
-            # Trade events queue for entry logic
+            # Trade events queue for entry logic and feed overshoot tracker
             elif threshold_key in self._trade_keys:
+                # Track overshoots only from trade-threshold DC events
+                # (sensor overshoots are too small and would miscalibrate TP)
+                if event_type in ("PDCC_Down", "PDCC2_UP"):
+                    self._track_overshoot(event, price)
                 trade_events.append(event)
 
         # Step 3: Check trailing risk manager for exits (every tick)

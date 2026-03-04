@@ -21,7 +21,7 @@ class OvershootTracker:
         self,
         window_size: int = 20,
         min_samples: int = 5,
-        tp_fraction: float = 0.8,
+        tp_fraction: float = 0.4,
         min_tp_pct: float = 0.003,
         default_tp_pct: float = 0.005,
     ):
