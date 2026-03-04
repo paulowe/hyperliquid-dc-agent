@@ -240,13 +240,19 @@ Both strategies slightly negative over 7 days (choppy HYPE market). The
 adaptive strategy had 76.9% win rate vs 63.5% baseline, but the tighter
 adaptive TP reduced gross profit per trade.
 
-### Overshoot distribution (from tracker)
+### Overshoot distribution (from tracker, trade-threshold only)
 
-- p50: 0.215%
-- p75: 0.422%
+- p50: 1.249%
+- p75: 1.482%
 - Samples: 20
 
-Adaptive TP settled at ~0.3% (0.215% × 0.8 = 0.172%, floored at min_tp 0.3%).
+Adaptive TP settled at ~0.5% (1.249% × 0.4 = 0.500%).
+
+**Note**: Earlier measurements showed p50=0.215% because sensor-threshold (0.4%)
+overshoots were contaminating the tracker. After fixing to track only
+trade-threshold (1.5%) overshoots, the median jumped to 1.249%. The
+`tp_fraction` was calibrated from 0.8 to 0.4 to produce ~0.5% adaptive TP,
+matching the optimal fixed TP from backtests.
 
 ## Usage
 
@@ -297,8 +303,27 @@ extension to the extreme point.
 
 This is intentionally conservative. The true extreme (bottom of the V) is only
 known in hindsight and can't be captured in real trading. The net V displacement
-represents a reliably achievable price level. Setting TP at 80% of this
+represents a reliably achievable price level. Setting TP at 40% of this
 conservative measurement ensures TPs are actually hit, producing higher win rates.
+
+### Why tp_fraction is 0.4 (not 0.8)
+
+Initially set to 0.8 (target 80% of median overshoot). However, trade-threshold
+overshoots have a median of ~1.25% for HYPE at threshold=0.015. At tp_fraction=0.8,
+adaptive TP would be ~1.0%, which backtests showed to be unprofitable (-$0.84 vs
+baseline $0.01 over 3 days). The reason: TP=1.0% is rarely reached, so most trades
+exit via SL instead.
+
+At tp_fraction=0.4, adaptive TP ≈ 0.5%, which matches the optimal fixed TP from
+parameter sweeps. This produces the highest TP exit rate (30/46 vs 24/46 baseline)
+and the lowest SL exit rate (6/46 vs 12/46 baseline).
+
+### Why overshoots track trade-threshold events only (not sensor)
+
+Sensor threshold (0.4%) produces tiny overshoots (0.1-0.3%) because the threshold
+itself is small. Including these in the overshoot pool contaminates the median,
+pulling adaptive TP down to the 0.3% floor. Only trade-threshold (1.5%) overshoots
+reflect the price dynamics relevant to our trading signals.
 
 Backtesting confirmed: TP=0.5% (conservative) was the only breakeven setting.
 TP=1.0% lost $1.56, TP=1.5% lost $2.42. Lower, more achievable TPs win.
