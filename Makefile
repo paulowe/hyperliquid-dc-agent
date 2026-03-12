@@ -104,6 +104,24 @@ test-adaptive: ## Run DC Adaptive strategy tests
 	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/strategies/dc_adaptive/ -v
 
 # ============================================================================
+# Basis Trade Strategy
+# ============================================================================
+
+basis-observe: ## Monitor HYPE funding rate without trading (observe-only)
+	@uv run --package hyperliquid-trading-bot python -m strategies.basis_trade.basis_bridge \
+		--symbol HYPE --observe-only --check-interval 60
+
+basis-trade: ## Run basis trade on sub-account (override: position_size)
+	@uv run --package hyperliquid-trading-bot python -m strategies.basis_trade.basis_bridge \
+		--symbol HYPE --position-size $(or $(position_size),3) --leverage 10 --yes
+
+test-basis: ## Run basis trade strategy tests (52 tests)
+	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/strategies/basis_trade/ -v
+
+sub-transfer-status: ## Show master and sub-account balances
+	@uv run --package hyperliquid-trading-bot python -m utils.sub_account_transfer --status
+
+# ============================================================================
 # Scaling Laws Analysis
 # ============================================================================
 
