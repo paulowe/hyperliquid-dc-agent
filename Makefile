@@ -104,6 +104,21 @@ test-adaptive: ## Run DC Adaptive strategy tests
 	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/strategies/dc_adaptive/ -v
 
 # ============================================================================
+# DC Trend-Adaptive Strategy
+# ============================================================================
+
+backtest-trend-adaptive: ## Compare DC Trend-Adaptive vs Adaptive vs Overshoot (override: symbol, days)
+	@uv run --package hyperliquid-trading-bot python -m strategies.dc_trend_adaptive.backtest_compare \
+		--symbol $(symbol) --days $(days)
+
+backtest-trend-adaptive-json: ## Three-way comparison with JSON output (override: symbol, days)
+	@uv run --package hyperliquid-trading-bot python -m strategies.dc_trend_adaptive.backtest_compare \
+		--symbol $(symbol) --days $(days) --json
+
+test-trend-adaptive: ## Run DC Trend-Adaptive strategy tests (49 tests)
+	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/strategies/dc_trend_adaptive/ -v
+
+# ============================================================================
 # Basis Trade Strategy
 # ============================================================================
 
