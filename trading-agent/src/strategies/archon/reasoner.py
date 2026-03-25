@@ -126,30 +126,28 @@ class ArchonReasoner:
         return self._decide_heuristic(context)
 
     async def _decide_with_claude(self, context: MarketContext) -> TradeDecision:
-        """Call Claude for a trade decision."""
-        from claude_agent_sdk import (
-            query,
-            ClaudeAgentOptions,
-            AssistantMessage,
-            TextBlock,
-        )
+        """Call Claude API for a trade decision.
+
+        Uses the anthropic Python SDK for direct API calls.
+        Requires ANTHROPIC_API_KEY environment variable.
+        """
+        import anthropic
+
+        client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY from env
 
         prompt = context.to_prompt_text()
 
-        options = ClaudeAgentOptions(
+        message = client.messages.create(
             model=self._model,
-            system_prompt=self._system_prompt,
-            permission_mode="bypassPermissions",
-            max_turns=1,
-            allowed_tools=[],
+            max_tokens=256,
+            system=self._system_prompt,
+            messages=[{"role": "user", "content": prompt}],
         )
 
         response_text = ""
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        response_text += block.text
+        for block in message.content:
+            if block.type == "text":
+                response_text += block.text
 
         return self._parse_claude_response(response_text, context)
 
