@@ -321,11 +321,13 @@ class ArchonStrategy(TradingStrategy):
         return None
 
     def on_trade_executed(
-        self, signal: TradingSignal, executed_price: float, executed_size: float
+        self, signal: TradingSignal, executed_price: float, executed_size: float,
+        timestamp: float = 0.0,
     ) -> None:
         """Called when an entry signal results in a trade fill."""
         self._trade_count += 1
-        self._last_entry_time = time.time()
+        # Use provided timestamp (from candle) or fallback to wall clock
+        self._last_entry_time = timestamp if timestamp > 0 else time.time()
 
         if signal.signal_type == SignalType.SELL:
             side = "SHORT"
