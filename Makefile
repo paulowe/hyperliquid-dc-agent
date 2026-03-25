@@ -130,7 +130,15 @@ archon-observe-ai: ## Run Archon in observe-only mode with Claude intelligence
 	@uv run --package hyperliquid-trading-bot python -m strategies.archon.bridge \
 		--symbol $(or $(symbol),HYPE) --observe-only --long-only
 
-test-archon: ## Run Archon strategy tests (46 tests)
+archon-backtest: ## Backtest Archon strategy (override: symbol, days)
+	@uv run --package hyperliquid-trading-bot python -m strategies.archon.backtest \
+		--symbol $(or $(symbol),HYPE) --days $(or $(days),7)
+
+archon-compare: ## Compare Archon vs DC Adaptive (override: symbol, days)
+	@uv run --package hyperliquid-trading-bot python -m strategies.archon.compare \
+		--symbol $(or $(symbol),HYPE) --days $(or $(days),7)
+
+test-archon: ## Run Archon strategy tests (52 tests)
 	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/strategies/archon/ -v
 
 # ============================================================================
