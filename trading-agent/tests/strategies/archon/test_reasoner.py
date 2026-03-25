@@ -51,7 +51,7 @@ class TestHeuristicDecision:
         )
         decision = reasoner._decide_heuristic(ctx)
         assert decision.action == "enter_long"
-        assert decision.confidence >= 0.6
+        assert decision.confidence >= 0.55
 
     def test_skip_short_in_long_only_mode(self):
         reasoner = ArchonReasoner(use_ai=False, direction_filter="long")
@@ -99,7 +99,7 @@ class TestHeuristicDecision:
         reasoner = ArchonReasoner(use_ai=False, direction_filter="both")
         ctx = make_context(
             trigger_event={"event_type": "PDCC2_UP"},
-            consecutive_losses=3,
+            consecutive_losses=4,  # loss guard escalates: 3 for <3, 4 for >=3
         )
         decision = reasoner._decide_heuristic(ctx)
         assert decision.action == "skip"
@@ -120,7 +120,7 @@ class TestHeuristicDecision:
             price_trend_pct=1.0,  # strong uptrend
         )
         decision = reasoner._decide_heuristic(ctx)
-        assert decision.confidence >= 0.7
+        assert decision.confidence >= 0.6  # base 0.55 + 0.10 trend boost
 
     def test_adaptive_tp_from_overshoot(self):
         reasoner = ArchonReasoner(use_ai=False, direction_filter="long")

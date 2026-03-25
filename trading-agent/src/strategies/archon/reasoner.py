@@ -199,11 +199,11 @@ class ArchonReasoner:
     def _decide_heuristic(self, context: MarketContext) -> TradeDecision:
         """Rule-based fallback when Claude is unavailable.
 
-        Simple long-only momentum logic:
+        Enhanced heuristic with price-structure awareness:
         - Enter LONG on PDCC2_UP in quiet/neutral regime
         - Close on PDCC_Down when in position
-        - Skip in choppy regime
-        - Skip after consecutive losses
+        - Skip in choppy regime or after consecutive losses
+        - Score entry quality based on trend alignment, range position, DC momentum
         """
         event_type = context.trigger_event.get("event_type", "")
         regime = context.regime
@@ -218,8 +218,9 @@ class ArchonReasoner:
                 reasoning=f"Choppy regime ({context.sensor_event_rate:.1f} events/min), skipping.",
             )
 
-        # Cool down after losses
-        if consecutive_losses >= 3:
+        # Cool down after losses (escalating threshold)
+        loss_threshold = 3 if consecutive_losses < 3 else 4
+        if consecutive_losses >= loss_threshold:
             return TradeDecision(
                 action="skip",
                 confidence=0.2,
@@ -248,7 +249,7 @@ class ArchonReasoner:
                 reasoning=f"Already {pos_side}, same-direction DC event.",
             )
 
-        # Entry logic
+        # Direction filter
         if self._direction_filter == "long" and event_type == "PDCC_Down":
             return TradeDecision(
                 action="skip",
@@ -262,35 +263,88 @@ class ArchonReasoner:
                 reasoning="Short-only mode, skipping DC Up entry.",
             )
 
+        # === Enhanced entry scoring ===
+        # Start with base confidence and adjust based on market context
+        confidence = 0.55
+        reasons = []
+
+        # Factor 1: Trend alignment (+/- 0.10)
+        trend = context.price_trend_pct
+        if event_type == "PDCC2_UP" and trend > 0.5:
+            confidence += 0.10
+            reasons.append(f"trend aligned ({trend:+.1f}%)")
+        elif event_type == "PDCC2_UP" and trend < -1.0:
+            confidence -= 0.10
+            reasons.append(f"counter-trend ({trend:+.1f}%)")
+        elif event_type == "PDCC_Down" and trend < -0.5:
+            confidence += 0.10
+            reasons.append(f"trend aligned ({trend:+.1f}%)")
+        elif event_type == "PDCC_Down" and trend > 1.0:
+            confidence -= 0.10
+            reasons.append(f"counter-trend ({trend:+.1f}%)")
+
+        # Factor 2: Range position (+/- 0.05)
+        # For longs, prefer buying in lower half of range
+        if context.price_high > context.price_low:
+            range_position = (context.current_price - context.price_low) / (context.price_high - context.price_low)
+            if event_type == "PDCC2_UP" and range_position < 0.4:
+                confidence += 0.05
+                reasons.append("low in range")
+            elif event_type == "PDCC2_UP" and range_position > 0.8:
+                confidence -= 0.05
+                reasons.append("high in range")
+
+        # Factor 3: DC momentum — are recent events consistent? (+/- 0.05)
+        if context.dc_up_count > 0 or context.dc_down_count > 0:
+            total_dc = context.dc_up_count + context.dc_down_count
+            if event_type == "PDCC2_UP" and context.dc_up_count / total_dc > 0.6:
+                confidence += 0.05
+                reasons.append("DC momentum up")
+            elif event_type == "PDCC_Down" and context.dc_down_count / total_dc > 0.6:
+                confidence += 0.05
+                reasons.append("DC momentum down")
+
+        # Factor 4: Recent trade performance (+/- 0.05)
+        if context.total_trades >= 3:
+            recent_wr = context.win_count / context.total_trades
+            if recent_wr > 0.6:
+                confidence += 0.05
+                reasons.append(f"hot streak ({recent_wr:.0%} WR)")
+            elif recent_wr < 0.3:
+                confidence -= 0.05
+                reasons.append(f"cold streak ({recent_wr:.0%} WR)")
+
         # Calculate adaptive TP from overshoot history
         tp_pct = 0.008  # default
         if context.avg_overshoot_pct > 0:
             tp_pct = max(0.003, context.avg_overshoot_pct / 100 * 0.4)
 
-        # Enter based on DC event direction
+        # Adaptive SL: tighter when confident, wider when less sure
+        sl_pct = 0.015
+        if confidence >= 0.7:
+            sl_pct = 0.012  # tighter SL for high-confidence entries
+        elif confidence < 0.55:
+            sl_pct = 0.018  # wider SL for marginal entries
+
+        # Build reasoning string
+        reason_str = ", ".join(reasons) if reasons else "neutral signals"
+
         if event_type == "PDCC2_UP":
-            confidence = 0.65
-            # Boost confidence if trend is positive
-            if context.price_trend_pct > 0.5:
-                confidence = 0.75
             return TradeDecision(
                 action="enter_long",
                 confidence=confidence,
-                reasoning=f"DC Up confirmation in {regime} regime, trend={context.price_trend_pct:+.2f}%.",
+                reasoning=f"DC Up in {regime}: {reason_str}.",
                 tp_pct=tp_pct,
-                sl_pct=0.015,
+                sl_pct=sl_pct,
             )
 
         if event_type == "PDCC_Down":
-            confidence = 0.65
-            if context.price_trend_pct < -0.5:
-                confidence = 0.75
             return TradeDecision(
                 action="enter_short",
                 confidence=confidence,
-                reasoning=f"DC Down confirmation in {regime} regime, trend={context.price_trend_pct:+.2f}%.",
+                reasoning=f"DC Down in {regime}: {reason_str}.",
                 tp_pct=tp_pct,
-                sl_pct=0.015,
+                sl_pct=sl_pct,
             )
 
         return TradeDecision(

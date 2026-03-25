@@ -167,7 +167,7 @@ class TestTradeExecution:
 
     def test_trailing_stop_exit(self):
         strategy = ArchonStrategy(make_config(
-            initial_stop_loss_pct=0.01,
+            initial_stop_loss_pct=0.02,
         ))
         strategy.start()
         strategy._context.record_tick(40.0, 999.0)
@@ -178,10 +178,10 @@ class TestTradeExecution:
         signal = asyncio.run(
             strategy.process_dc_event_async(event, 40.0, 1000.0)
         )
-        strategy.on_trade_executed(signal, 40.0, signal.size)
+        strategy.on_trade_executed(signal, 40.0, signal.size, timestamp=1000.0)
 
-        # Price drops to hit SL (40.0 * 0.99 = 39.6)
-        exit_signals = strategy.generate_signals(md(39.5, 1100.0), [], 100_000.0)
+        # Price drops significantly to hit SL (adaptive SL may be 1.2-1.8%)
+        exit_signals = strategy.generate_signals(md(39.0, 1100.0), [], 100_000.0)
         closes = [s for s in exit_signals if s.signal_type == SignalType.CLOSE]
         assert len(closes) >= 1
         assert "stop_loss" in closes[0].reason

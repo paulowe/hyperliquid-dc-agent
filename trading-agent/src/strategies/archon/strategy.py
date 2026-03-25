@@ -252,6 +252,7 @@ class ArchonStrategy(TradingStrategy):
                     "confidence": decision.confidence,
                     "source": decision.source,
                     "adaptive_tp": decision.tp_pct,
+                    "adaptive_sl": decision.sl_pct,
                     "regime": context.regime,
                 },
             )
@@ -274,6 +275,7 @@ class ArchonStrategy(TradingStrategy):
                     "confidence": decision.confidence,
                     "source": decision.source,
                     "adaptive_tp": decision.tp_pct,
+                    "adaptive_sl": decision.sl_pct,
                     "regime": context.regime,
                 },
             )
@@ -336,20 +338,24 @@ class ArchonStrategy(TradingStrategy):
         else:
             return
 
-        # Use adaptive TP from the decision
+        # Use adaptive TP and SL from the decision
         adaptive_tp = signal.metadata.get("adaptive_tp", self._cfg.default_tp_pct)
+        adaptive_sl = signal.metadata.get("adaptive_sl", self._cfg.initial_stop_loss_pct)
 
-        # Open position in trailing RM with decision-specific TP
+        # Open position in trailing RM with decision-specific TP and SL
         if not self._trailing_rm.has_position:
             old_tp = self._trailing_rm._tp_pct
+            old_sl = self._trailing_rm._sl_pct
             self._trailing_rm._tp_pct = adaptive_tp
+            self._trailing_rm._sl_pct = adaptive_sl
             self._trailing_rm.open_position(side, executed_price, executed_size)
             self._trailing_rm._tp_pct = old_tp
+            self._trailing_rm._sl_pct = old_sl
 
         logger.info(
-            "Archon FILL: %s %.6f %s @ %.2f | tp=%.3f%%",
+            "Archon FILL: %s %.6f %s @ %.2f | tp=%.3f%% sl=%.3f%%",
             side, executed_size, self._cfg.symbol, executed_price,
-            adaptive_tp * 100,
+            adaptive_tp * 100, adaptive_sl * 100,
         )
 
     def get_status(self) -> Dict[str, Any]:
