@@ -266,6 +266,14 @@ class ArchonReasoner:
         confidence = 0.55
         reasons = []
 
+        # Factor 0: Price range quality filter
+        # Narrow ranges (<0.3%) correlate with losing entries
+        if context.price_high > context.price_low and context.tick_count >= 10:
+            range_pct = (context.price_high - context.price_low) / context.price_low * 100
+            if range_pct < 0.3:
+                confidence -= 0.10
+                reasons.append(f"narrow range ({range_pct:.1f}%)")
+
         # Factor 1: Trend alignment (+/- 0.10)
         trend = context.price_trend_pct
         if event_type == "PDCC2_UP" and trend > 0.5:
