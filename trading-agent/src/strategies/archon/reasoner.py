@@ -262,8 +262,12 @@ class ArchonReasoner:
             )
 
         # === Enhanced entry scoring ===
-        # Start with base confidence and adjust based on market context
-        confidence = 0.55
+        # Start with base confidence and adjust based on market context.
+        # Base 0.58 so that without positive signals, entries need at least
+        # one confirming factor to clear the 0.60 min_confidence threshold.
+        # Live validation (2026-03-25): both "high in range" entries at
+        # conf=0.55 were marginal — one won +0.13%, one lost -1.51%.
+        confidence = 0.58
         reasons = []
 
         # Factor 0: Price range quality filter
