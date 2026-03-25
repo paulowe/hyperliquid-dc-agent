@@ -119,6 +119,21 @@ test-trend-adaptive: ## Run DC Trend-Adaptive strategy tests (49 tests)
 	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/strategies/dc_trend_adaptive/ -v
 
 # ============================================================================
+# Archon Strategy (Claude-Augmented DC)
+# ============================================================================
+
+archon-observe: ## Run Archon in observe-only mode (heuristic, no trades)
+	@uv run --package hyperliquid-trading-bot python -m strategies.archon.bridge \
+		--symbol $(or $(symbol),HYPE) --observe-only --no-ai --long-only
+
+archon-observe-ai: ## Run Archon in observe-only mode with Claude intelligence
+	@uv run --package hyperliquid-trading-bot python -m strategies.archon.bridge \
+		--symbol $(or $(symbol),HYPE) --observe-only --long-only
+
+test-archon: ## Run Archon strategy tests (46 tests)
+	@uv run --package hyperliquid-trading-bot python -m pytest trading-agent/tests/strategies/archon/ -v
+
+# ============================================================================
 # Basis Trade Strategy
 # ============================================================================
 

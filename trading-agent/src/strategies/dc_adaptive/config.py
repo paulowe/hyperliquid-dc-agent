@@ -45,6 +45,11 @@ class DCAdaptiveConfig:
     max_consecutive_losses: int = 3
     base_cooldown_seconds: float = 300.0
 
+    # Direction filter: "both", "long", or "short"
+    # "long" = only enter LONG on PDCC2_UP, close (not reverse) on PDCC_Down
+    # "short" = only enter SHORT on PDCC_Down, close (not reverse) on PDCC2_UP
+    direction_filter: str = "both"
+
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> DCAdaptiveConfig:
         """Create config from dict, converting list thresholds to tuples."""
@@ -108,5 +113,12 @@ class DCAdaptiveConfig:
             cfg.max_consecutive_losses = int(d["max_consecutive_losses"])
         if "base_cooldown_seconds" in d:
             cfg.base_cooldown_seconds = float(d["base_cooldown_seconds"])
+
+        # Direction filter
+        if "direction_filter" in d:
+            val = str(d["direction_filter"]).lower()
+            if val not in ("both", "long", "short"):
+                raise ValueError(f"direction_filter must be 'both', 'long', or 'short', got '{val}'")
+            cfg.direction_filter = val
 
         return cfg

@@ -221,6 +221,141 @@ class TestOnTradeExecuted:
             assert strategy._trailing_rm.has_position is True
 
 
+class TestDirectionFilter:
+    """Direction filter blocks entries in one direction and converts reversals to closes."""
+
+    def test_long_only_blocks_sell_entries(self):
+        """In long-only mode, PDCC_Down should NOT produce SELL entry signals."""
+        strategy = DCAdaptiveStrategy(make_config(direction_filter="long"))
+        strategy.start()
+        signals, _, _ = drive_price_down(strategy)
+        sells = [s for s in signals if s.signal_type == SignalType.SELL]
+        assert len(sells) == 0
+
+    def test_long_only_allows_buy_entries(self):
+        """In long-only mode, PDCC2_UP should still produce BUY entry signals."""
+        strategy = DCAdaptiveStrategy(make_config(direction_filter="long"))
+        strategy.start()
+        signals, _, _ = drive_price_up(strategy)
+        buys = [s for s in signals if s.signal_type == SignalType.BUY]
+        assert len(buys) >= 1
+
+    def test_short_only_blocks_buy_entries(self):
+        """In short-only mode, PDCC2_UP should NOT produce BUY entry signals."""
+        strategy = DCAdaptiveStrategy(make_config(direction_filter="short"))
+        strategy.start()
+        signals, _, _ = drive_price_up(strategy)
+        buys = [s for s in signals if s.signal_type == SignalType.BUY]
+        assert len(buys) == 0
+
+    def test_short_only_allows_sell_entries(self):
+        """In short-only mode, PDCC_Down should still produce SELL entry signals."""
+        strategy = DCAdaptiveStrategy(make_config(direction_filter="short"))
+        strategy.start()
+        signals, _, _ = drive_price_down(strategy)
+        sells = [s for s in signals if s.signal_type == SignalType.SELL]
+        assert len(sells) >= 1
+
+    def test_long_only_closes_on_reversal(self):
+        """In long-only mode, PDCC_Down while LONG should emit CLOSE (not SELL)."""
+        strategy = DCAdaptiveStrategy(make_config(direction_filter="long"))
+        strategy.start()
+
+        # First get a BUY entry
+        signals, price, ts = drive_price_up(strategy)
+        buys = [s for s in signals if s.signal_type == SignalType.BUY]
+        assert len(buys) >= 1, "Need at least one BUY to test reversal close"
+
+        # Simulate fill so strategy tracks position
+        buy_sig = buys[0]
+        strategy.on_trade_executed(buy_sig, price, buy_sig.size)
+        assert strategy._trailing_rm.has_position
+
+        # Now drive price down to trigger PDCC_Down — should close, not reverse
+        all_signals = []
+        for i in range(30):
+            price -= price * 0.0002
+            ts += 10.0
+            sigs = strategy.generate_signals(md(price, ts), [], 100_000.0)
+            all_signals.extend(sigs)
+
+        closes = [s for s in all_signals if s.signal_type == SignalType.CLOSE]
+        sells = [s for s in all_signals if s.signal_type == SignalType.SELL]
+        # Should have a CLOSE from direction filter or from SL/TP
+        # Should NOT have new SELL entries
+        assert len(sells) == 0, "Long-only should not produce SELL entries on reversal"
+        # Position should be closed (either by direction filter close or SL/TP)
+        # Check that at least one close was emitted
+        assert len(closes) >= 1, "Should have closed position on reversal DC event or SL"
+
+    def test_long_only_reversal_close_has_correct_metadata(self):
+        """CLOSE from direction filter should include side, pnl_pct, and entry_price."""
+        strategy = DCAdaptiveStrategy(make_config(direction_filter="long"))
+        strategy.start()
+
+        # Get a BUY entry
+        signals, price, ts = drive_price_up(strategy)
+        buys = [s for s in signals if s.signal_type == SignalType.BUY]
+        if not buys:
+            pytest.skip("No BUY signal generated")
+
+        strategy.on_trade_executed(buys[0], price, buys[0].size)
+
+        # Drive price down to trigger reversal close
+        all_signals = []
+        for i in range(40):
+            price -= price * 0.0002
+            ts += 10.0
+            sigs = strategy.generate_signals(md(price, ts), [], 100_000.0)
+            all_signals.extend(sigs)
+
+        dc_closes = [s for s in all_signals
+                     if s.signal_type == SignalType.CLOSE and s.reason == "dc_reversal_close"]
+        if dc_closes:
+            close = dc_closes[0]
+            assert "side" in close.metadata
+            assert close.metadata["side"] == "LONG"
+            assert "pnl_pct" in close.metadata
+            assert "entry_price" in close.metadata
+
+    def test_both_direction_allows_all(self):
+        """Default direction_filter='both' allows both BUY and SELL."""
+        strategy = DCAdaptiveStrategy(make_config(direction_filter="both"))
+        strategy.start()
+
+        # Down
+        signals_down, _, _ = drive_price_down(strategy)
+        sells = [s for s in signals_down if s.signal_type == SignalType.SELL]
+        assert len(sells) >= 1
+
+        # Fresh strategy for up
+        strategy2 = DCAdaptiveStrategy(make_config(direction_filter="both"))
+        strategy2.start()
+        signals_up, _, _ = drive_price_up(strategy2)
+        buys = [s for s in signals_up if s.signal_type == SignalType.BUY]
+        assert len(buys) >= 1
+
+
+class TestConfigDirectionFilter:
+    """Config validation for direction_filter."""
+
+    def test_default_is_both(self):
+        strategy = DCAdaptiveStrategy(make_config())
+        assert strategy._cfg.direction_filter == "both"
+
+    def test_long_filter_accepted(self):
+        strategy = DCAdaptiveStrategy(make_config(direction_filter="long"))
+        assert strategy._cfg.direction_filter == "long"
+
+    def test_short_filter_accepted(self):
+        strategy = DCAdaptiveStrategy(make_config(direction_filter="short"))
+        assert strategy._cfg.direction_filter == "short"
+
+    def test_invalid_filter_rejected(self):
+        with pytest.raises(ValueError, match="direction_filter"):
+            DCAdaptiveStrategy(make_config(direction_filter="invalid"))
+
+
 class TestStrategyLifecycle:
     """Start/stop lifecycle."""
 

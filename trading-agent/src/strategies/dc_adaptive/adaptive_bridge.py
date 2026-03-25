@@ -43,17 +43,21 @@ from interfaces.exchange import Order, OrderSide, OrderType
 from telemetry.collector import NullCollector, TelemetryCollector
 from telemetry.events import EventType
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-    stream=sys.stdout,
-)
-# Force unbuffered output
-for handler in logging.root.handlers:
-    if hasattr(handler, 'stream'):
-        handler.stream = sys.stdout
 logger = logging.getLogger(__name__)
+
+
+def _setup_logging():
+    """Configure logging for live bridge (stdout, unbuffered)."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stdout,
+    )
+    # Force unbuffered output
+    for handler in logging.root.handlers:
+        if hasattr(handler, 'stream'):
+            handler.stream = sys.stdout
 
 # Price data always comes from mainnet (the only active market)
 PRICE_WS_URL = "wss://api.hyperliquid.xyz/ws"
@@ -193,6 +197,33 @@ def parse_args():
         help="Base cooldown duration multiplier in seconds (default: 300 = 5 min)",
     )
 
+    # --- Direction filter ---
+    direction_group = parser.add_mutually_exclusive_group()
+    direction_group.add_argument(
+        "--long-only", action="store_true",
+        help="Only enter LONG positions; close (not reverse) on DC Down events",
+    )
+    direction_group.add_argument(
+        "--short-only", action="store_true",
+        help="Only enter SHORT positions; close (not reverse) on DC Up events",
+    )
+
+    # --- Sub-account routing ---
+    parser.add_argument(
+        "--vault-address", type=str, default="",
+        help="Sub-account address to route orders to via vault_address (isolated from master)",
+    )
+
+    # --- Compounding ---
+    parser.add_argument(
+        "--compound", action="store_true",
+        help="Enable compounding: scale position size to account equity before each trade",
+    )
+    parser.add_argument(
+        "--compound-fraction", type=float, default=0.9,
+        help="Fraction of account equity to use as position size when compounding (default: 0.9 = 90%%)",
+    )
+
     # --- Operational flags ---
     parser.add_argument(
         "--yes", action="store_true",
@@ -213,12 +244,29 @@ def parse_args():
     return parser.parse_args()
 
 
-async def create_adapter(network: str, private_key: str, leverage: int, symbol: str, account_address: str = ""):
+def compute_compound_size(equity: float, fraction: float, leverage: int) -> float:
+    """Compute position size from account equity for compounding.
+
+    Returns equity * fraction, floored at the minimum viable notional
+    for the given leverage. At 10x leverage with $3 equity, the max
+    notional is $30 — so the floor is $10 (smallest practical order on HL).
+    """
+    # Minimum notional Hyperliquid will reliably accept
+    MIN_NOTIONAL = 10.0
+    size = equity * fraction
+    return max(size, MIN_NOTIONAL)
+
+
+async def create_adapter(network: str, private_key: str, leverage: int, symbol: str,
+                          account_address: str = "", vault_address: str = ""):
     """Create and connect an adapter for the specified network.
 
-    If account_address is provided, the API wallet (from private_key) will
-    trade on behalf of the main wallet (account_address). This requires
-    prior delegation setup on Hyperliquid.
+    Routing priority:
+      1. vault_address — routes orders to a sub-account (completely isolated)
+      2. account_address — delegates trading from API wallet to main wallet
+      3. Neither — trades directly from the API wallet
+
+    vault_address and account_address are mutually exclusive.
     """
     from exchanges.hyperliquid.adapter import HyperliquidAdapter
     from hyperliquid.info import Info
@@ -231,12 +279,16 @@ async def create_adapter(network: str, private_key: str, leverage: int, symbol: 
 
     adapter = HyperliquidAdapter(private_key=private_key, testnet=is_testnet)
 
-    # Custom connect with account_address delegation support
+    # Custom connect with vault_address / account_address support
     wallet = Account.from_key(private_key)
     adapter.info = Info(base_url, skip_ws=True)
 
-    # Only use delegation if account_address differs from the wallet's own address
-    if account_address and account_address.lower() != wallet.address.lower():
+    if vault_address:
+        # Sub-account routing: orders execute on the sub-account
+        adapter.exchange = Exchange(wallet, base_url, vault_address=vault_address)
+        logger.info("Sub-account mode: orders routed to %s via vault_address", vault_address[:10] + "...")
+    elif account_address and account_address.lower() != wallet.address.lower():
+        # Delegation: API wallet trades on behalf of main wallet
         adapter.exchange = Exchange(wallet, base_url, account_address=account_address)
         logger.info("API wallet %s trading on behalf of %s", wallet.address, account_address)
     else:
@@ -581,6 +633,7 @@ async def execute_signal(adapter, signal, current_price: float) -> bool:
 async def main():
     import websockets
 
+    _setup_logging()
     args = parse_args()
 
     network = get_network()
@@ -596,10 +649,17 @@ async def main():
         )
         sys.exit(1)
 
-    # Get wallet address for delegation
-    # MAINNET_ACCOUNT_ADDRESS is the delegated-to main wallet (has the funds)
-    # MAINNET_WALLET_ADDRESS is a legacy alias — check both
-    account_address = os.environ.get("MAINNET_ACCOUNT_ADDRESS", "") or os.environ.get(net_cfg["wallet_env"], "")
+    # Resolve vault_address (sub-account) or account_address (delegation)
+    # vault_address takes priority — it's for isolated sub-account trading
+    vault_address = args.vault_address or os.environ.get("SUB_ACCOUNT_ADDRESS", "")
+    # Only use vault_address if explicitly requested via CLI flag
+    vault_address = args.vault_address  # empty string means "don't use sub-account"
+
+    # account_address is for API wallet delegation to main wallet
+    # Only used when vault_address is NOT set
+    account_address = ""
+    if not vault_address:
+        account_address = os.environ.get("MAINNET_ACCOUNT_ADDRESS", "") or os.environ.get(net_cfg["wallet_env"], "")
 
     # Mainnet safety confirmation
     if network == "mainnet" and not args.observe_only and not args.yes:
@@ -607,10 +667,13 @@ async def main():
         print("  WARNING: You are about to trade on MAINNET with REAL MONEY")
         print("  Strategy: DC Adaptive (regime detection + adaptive TP + loss guards)")
         print("!" * 70)
-        print(f"  Wallet: {account_address or 'API wallet (no delegation)'}")
+        target = vault_address or account_address or "API wallet (no delegation)"
+        mode = "SUB-ACCOUNT" if vault_address else "DELEGATION" if account_address else "DIRECT"
+        print(f"  Wallet: {target} ({mode})")
         print(f"  Threshold: {args.threshold*100:.2f}%  Sensor: {args.sensor_threshold*100:.2f}%")
         print(f"  SL: {args.sl_pct*100:.1f}%  TP: {args.tp_pct*100:.1f}% (default, adaptive overrides)")
-        print(f"  Size: ${args.position_size}  Leverage: {args.leverage}x")
+        size_label = f"${args.position_size}" + (" (compound)" if args.compound else "")
+        print(f"  Size: {size_label}  Leverage: {args.leverage}x")
         print()
         confirm = input("  Type 'yes' to continue: ").strip().lower()
         if confirm != "yes":
@@ -645,6 +708,8 @@ async def main():
         # Loss streak guard
         "max_consecutive_losses": args.max_consecutive_losses,
         "base_cooldown_seconds": args.base_cooldown_seconds,
+        # Direction filter
+        "direction_filter": "long" if args.long_only else ("short" if args.short_only else "both"),
     }
     strategy = DCAdaptiveStrategy(config)
     strategy.start()
@@ -685,7 +750,12 @@ async def main():
     logger.info("Symbol     : %s", symbol)
     logger.info("Threshold  : %.4f (%.2f%%)", args.threshold, args.threshold * 100)
     logger.info("Sensor     : %.4f (%.2f%%)", args.sensor_threshold, args.sensor_threshold * 100)
-    logger.info("Position   : $%.0f USD @ %dx", args.position_size, args.leverage)
+    compound_label = f" (compound {args.compound_fraction*100:.0f}%%)" if args.compound else ""
+    logger.info("Position   : $%.0f USD @ %dx%s", args.position_size, args.leverage, compound_label)
+    if vault_address:
+        logger.info("Account    : SUB-ACCOUNT %s", vault_address[:14] + "...")
+    elif account_address:
+        logger.info("Account    : DELEGATION to %s", account_address[:14] + "...")
     logger.info("SL/TP      : %.2f%% / %.2f%% (default, adaptive overrides TP)", args.sl_pct * 100, args.tp_pct * 100)
     logger.info("Trail      : %.0f%% lock-in (min profit: %.2f%%)", args.trail_pct * 100, args.min_profit_to_trail_pct * 100)
     logger.info("Backstop   : SL=%.1f%% TP=%.1f%%", args.backstop_sl_pct * 100, args.backstop_tp_pct * 100)
@@ -695,6 +765,8 @@ async def main():
                 args.os_window_size, args.os_min_samples, args.tp_fraction, args.min_tp_pct * 100)
     logger.info("Loss Guard : max_losses=%d cooldown=%ds",
                 args.max_consecutive_losses, int(args.base_cooldown_seconds))
+    direction = "LONG only" if args.long_only else ("SHORT only" if args.short_only else "both directions")
+    logger.info("Direction  : %s", direction)
     logger.info("Duration   : %s", f"{args.duration} minutes" if args.duration > 0 else "unlimited (Ctrl+C to stop)")
     logger.info("=" * 70)
 
@@ -711,14 +783,31 @@ async def main():
     # Connect adapter (unless observe-only)
     adapter = None
     if not args.observe_only:
-        adapter = await create_adapter(network, private_key, args.leverage, symbol, account_address)
+        adapter = await create_adapter(
+            network, private_key, args.leverage, symbol,
+            account_address=account_address,
+            vault_address=vault_address,
+        )
 
-        # Show starting account value and positions
-        query_addr = account_address or adapter.exchange.wallet.address
+        # For sub-accounts, query the sub-account state (vault_address)
+        # For delegation, query the main wallet (account_address)
+        query_addr = vault_address or account_address or adapter.exchange.wallet.address
         user_state = adapter.info.user_state(query_addr)
-        acct_value = float(user_state.get("marginSummary", {}).get("accountValue", 0))
+        perp_value = float(user_state.get("marginSummary", {}).get("accountValue", 0))
+        # Include spot USDC balance (relevant for sub-accounts in unified mode)
+        spot_value = 0.0
+        try:
+            spot_state = adapter.info.spot_user_state(query_addr)
+            for bal in spot_state.get("balances", []):
+                if bal["coin"] == "USDC":
+                    spot_value = float(bal.get("total", 0))
+                    break
+        except Exception:
+            pass
+        acct_value = perp_value + spot_value
         positions = await adapter.get_positions()
-        logger.info("Account value: $%.2f (wallet: %s)", acct_value, query_addr[:10] + "...")
+        logger.info("Account value: $%.2f (perp=$%.2f + spot=$%.2f) (wallet: %s)",
+                    acct_value, perp_value, spot_value, query_addr[:10] + "...")
         if positions:
             for p in positions:
                 logger.info(
@@ -896,6 +985,41 @@ async def main():
                                     backstop_sl_oid = None
                                     backstop_tp_oid = None
 
+                                # Compounding: update position size before entry trades
+                                if args.compound and signal.signal_type in (SignalType.BUY, SignalType.SELL):
+                                    try:
+                                        # Total equity = perp accountValue + spot USDC balance
+                                        eq_state = adapter.info.user_state(query_addr)
+                                        perp_equity = float(eq_state.get("marginSummary", {}).get("accountValue", 0))
+                                        spot_equity = 0.0
+                                        try:
+                                            spot_state = adapter.info.spot_user_state(query_addr)
+                                            for bal in spot_state.get("balances", []):
+                                                if bal["coin"] == "USDC":
+                                                    spot_equity = float(bal.get("total", 0))
+                                                    break
+                                        except Exception:
+                                            pass
+                                        equity = perp_equity + spot_equity
+                                        new_size = compute_compound_size(equity, args.compound_fraction, args.leverage)
+                                        old_size = strategy._cfg.position_size_usd
+                                        strategy._cfg.position_size_usd = new_size
+                                        strategy._cfg.max_position_size_usd = new_size * 4
+                                        # Recalculate signal size with updated position size
+                                        new_entry_size = new_size / price
+                                        if signal.metadata.get("reversal"):
+                                            old_pos_size = signal.metadata.get("new_position_size", signal.size)
+                                            signal.size = signal.size - old_pos_size + new_entry_size
+                                            signal.metadata["new_position_size"] = new_entry_size
+                                        else:
+                                            signal.size = new_entry_size
+                                        logger.info(
+                                            "COMPOUND: equity=$%.2f → position_size=$%.2f (was $%.2f)",
+                                            equity, new_size, old_size,
+                                        )
+                                    except Exception as e:
+                                        logger.warning("Compound equity query failed, using last size: %s", e)
+
                                 ok = await execute_signal(adapter, signal, price)
                                 if ok:
                                     trade_count += 1
@@ -967,7 +1091,7 @@ async def main():
                         # Account snapshot every ~3600 ticks (~1 hour)
                         if adapter and tick_count % 3600 == 0:
                             try:
-                                query_addr = account_address or adapter.exchange.wallet.address
+                                query_addr = vault_address or account_address or adapter.exchange.wallet.address
                                 snap_state = adapter.info.user_state(query_addr)
                                 snap_margin = snap_state.get("marginSummary", {})
                                 telem.emit(EventType.ACCOUNT_SNAPSHOT, {
@@ -1079,7 +1203,7 @@ async def main():
 
     if adapter:
         try:
-            query_addr = account_address or adapter.exchange.wallet.address
+            query_addr = vault_address or account_address or adapter.exchange.wallet.address
             user_state = adapter.info.user_state(query_addr)
             acct_value = float(user_state.get("marginSummary", {}).get("accountValue", 0))
             logger.info("Final account   : $%.2f", acct_value)

@@ -178,6 +178,42 @@ class DCAdaptiveStrategy(TradingStrategy):
 
             new_side = "SHORT" if event_type == "PDCC_Down" else "LONG"
 
+            # === GUARD 0: Direction filter ===
+            direction_blocked = (
+                (self._cfg.direction_filter == "long" and new_side == "SHORT")
+                or (self._cfg.direction_filter == "short" and new_side == "LONG")
+            )
+            if direction_blocked:
+                # If we have an open position in the allowed direction,
+                # close it (the DC reversal signal means the move is over)
+                if self._trailing_rm.has_position:
+                    pnl_pct = self._trailing_rm._compute_pnl_pct(price)
+                    close_side = self._trailing_rm.side
+                    close_size = self._trailing_rm.size
+                    self._loss_guard.record_trade(pnl_pct > 0, ts)
+                    logger.info(
+                        "DC Adaptive CLOSE (direction filter): %s @ %.2f | pnl=%.4f%%",
+                        close_side, price, pnl_pct * 100,
+                    )
+                    signals.append(TradingSignal(
+                        signal_type=SignalType.CLOSE,
+                        asset=self._cfg.symbol,
+                        size=close_size,
+                        reason="dc_reversal_close",
+                        metadata={
+                            "side": close_side,
+                            "pnl_pct": pnl_pct,
+                            "trigger_price": price,
+                            "entry_price": self._trailing_rm.entry_price,
+                            "sl_level": self._trailing_rm.current_sl_price,
+                            "tp_level": self._trailing_rm.current_tp_price,
+                            "high_water_mark": self._trailing_rm.high_water_mark,
+                            "low_water_mark": self._trailing_rm.low_water_mark,
+                        },
+                    ))
+                    self._trailing_rm.close_position()
+                continue
+
             # === GUARD 1: Regime check ===
             if not self._regime.should_trade(ts):
                 self._skipped_choppy += 1
