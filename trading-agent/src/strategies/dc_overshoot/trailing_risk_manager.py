@@ -138,7 +138,19 @@ class TrailingRiskManager:
         )
 
     def close_position(self) -> None:
-        """Clear all position state."""
+        """Clear all position state, stashing final MFE/MAE for telemetry."""
+        # Stash final water marks so bridge can read MFE/MAE after close
+        if self._side is not None and self._entry_price is not None:
+            if self._side == "LONG":
+                self._last_mfe = (self._high_water_mark - self._entry_price) / self._entry_price if self._high_water_mark else 0
+                self._last_mae = (self._entry_price - self._low_water_mark) / self._entry_price if self._low_water_mark else 0
+            else:
+                self._last_mfe = (self._entry_price - self._low_water_mark) / self._entry_price if self._low_water_mark else 0
+                self._last_mae = (self._high_water_mark - self._entry_price) / self._entry_price if self._high_water_mark else 0
+        else:
+            self._last_mfe = 0
+            self._last_mae = 0
+
         self._side = None
         self._entry_price = None
         self._size = None
@@ -146,6 +158,16 @@ class TrailingRiskManager:
         self._current_tp = None
         self._high_water_mark = None
         self._low_water_mark = None
+
+    @property
+    def last_mfe(self) -> float:
+        """MFE from the most recently closed position."""
+        return getattr(self, '_last_mfe', 0)
+
+    @property
+    def last_mae(self) -> float:
+        """MAE from the most recently closed position."""
+        return getattr(self, '_last_mae', 0)
 
     # --- Tick-by-tick update ---
 

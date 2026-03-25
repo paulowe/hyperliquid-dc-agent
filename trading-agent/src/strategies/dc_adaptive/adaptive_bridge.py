@@ -1072,17 +1072,18 @@ async def main():
                                         })
 
                                     elif signal.signal_type == SignalType.CLOSE:
-                                        # Emit TRADE_EXIT with risk manager state + MFE/MAE
-                                        rm_state = strategy._trailing_rm.get_status()
+                                        # Emit TRADE_EXIT with MFE/MAE from signal metadata
+                                        # (stashed before close_position() wipes RM state)
+                                        rm = strategy._trailing_rm
                                         telem.emit(EventType.TRADE_EXIT, {
                                             "trade_id": current_trade_id,
                                             "exit_price": price,
                                             "exit_reason": signal.reason,
-                                            "entry_price": rm_state.get("entry_price"),
-                                            "sl_at_exit": rm_state.get("current_sl"),
-                                            "tp_at_exit": rm_state.get("current_tp"),
-                                            "max_favorable_excursion_pct": rm_state.get("max_favorable_excursion_pct"),
-                                            "max_adverse_excursion_pct": rm_state.get("max_adverse_excursion_pct"),
+                                            "entry_price": signal.metadata.get("entry_price"),
+                                            "sl_at_exit": signal.metadata.get("sl_level"),
+                                            "tp_at_exit": signal.metadata.get("tp_level"),
+                                            "max_favorable_excursion_pct": rm.last_mfe,
+                                            "max_adverse_excursion_pct": rm.last_mae,
                                             "trade_duration_s": (time.time() - trade_entry_time) if trade_entry_time else None,
                                         })
                                         current_trade_id = None
