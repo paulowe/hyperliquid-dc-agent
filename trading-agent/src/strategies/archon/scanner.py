@@ -57,7 +57,10 @@ def parse_args():
     parser.add_argument("--symbols", default="HYPE,SOL,TAO,SUI,DOGE",
                         help="Comma-separated symbols to scan")
     parser.add_argument("--observe-only", action="store_true")
-    parser.add_argument("--threshold", type=float, default=0.02)
+    parser.add_argument("--threshold", type=float, default=0.02,
+                        help="Default DC threshold (overridden by --thresholds)")
+    parser.add_argument("--thresholds", type=str, default="",
+                        help="Per-symbol thresholds, e.g. 'HYPE:0.02,SOL:0.015,TAO:0.025'")
     parser.add_argument("--sensor-threshold", type=float, default=0.004)
     parser.add_argument("--position-size", type=float, default=10.0)
     parser.add_argument("--leverage", type=int, default=5)
@@ -82,13 +85,24 @@ async def main():
 
     symbols = [s.strip() for s in args.symbols.split(",")]
 
+    # Parse per-symbol thresholds: "HYPE:0.02,SOL:0.015,TAO:0.025"
+    symbol_thresholds: dict[str, float] = {}
+    if args.thresholds:
+        for pair in args.thresholds.split(","):
+            sym_thresh = pair.strip().split(":")
+            if len(sym_thresh) == 2:
+                symbol_thresholds[sym_thresh[0].strip()] = float(sym_thresh[1].strip())
+
     # Create one strategy instance per symbol
     strategies: dict[str, ArchonStrategy] = {}
     for sym in symbols:
+        threshold = symbol_thresholds.get(sym, args.threshold)
+        # Sensor threshold scales with trade threshold (roughly 1/5)
+        sensor = symbol_thresholds.get(sym, args.threshold) * 0.2 if sym in symbol_thresholds else args.sensor_threshold
         config = {
             "symbol": sym,
-            "dc_threshold": [args.threshold, args.threshold],
-            "sensor_threshold": [args.sensor_threshold, args.sensor_threshold],
+            "dc_threshold": [threshold, threshold],
+            "sensor_threshold": [sensor, sensor],
             "position_size_usd": args.position_size,
             "leverage": args.leverage,
             "initial_stop_loss_pct": args.sl_pct,
@@ -128,7 +142,11 @@ async def main():
     logger.info("Mode       : %s", mode)
     logger.info("Intelligence: %s (min conf: %.0f%%)", ai_mode, args.min_confidence * 100)
     logger.info("Symbols    : %s", ", ".join(symbols))
-    logger.info("Threshold  : %.2f%% | Sensor: %.2f%%", args.threshold * 100, args.sensor_threshold * 100)
+    if symbol_thresholds:
+        thresh_str = " | ".join(f"{s}={symbol_thresholds.get(s, args.threshold)*100:.1f}%" for s in symbols)
+        logger.info("Thresholds : %s", thresh_str)
+    else:
+        logger.info("Threshold  : %.2f%% (all symbols)", args.threshold * 100)
     logger.info("SL/TP      : %.2f%% / %.2f%% | Trail: %.0f%%",
                 args.sl_pct * 100, args.tp_pct * 100, args.trail_pct * 100)
     logger.info("Position   : $%.0f @ %dx | Direction: LONG only", args.position_size, args.leverage)

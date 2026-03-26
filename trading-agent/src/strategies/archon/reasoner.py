@@ -94,29 +94,43 @@ class ArchonReasoner:
         return self._decide_heuristic(context)
 
     async def _decide_with_claude(self, context: MarketContext) -> TradeDecision:
-        """Call Claude API for a trade decision.
+        """Call Claude for a trade decision.
 
-        Uses the anthropic Python SDK for direct API calls.
-        Requires ANTHROPIC_API_KEY environment variable.
+        Tries the CLI proxy first (uses Claude Code Max subscription),
+        falls back to anthropic SDK (requires API credits).
         """
-        import anthropic
-
-        client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY from env
-
         prompt = context.to_prompt_text()
 
+        # Try CLI proxy first (free via Claude Code Max subscription)
+        try:
+            from strategies.archon.claude_proxy import claude_cli_query
+            response_text = claude_cli_query(
+                user_prompt=prompt,
+                system_prompt=self._system_prompt,
+                model=self._model,
+                timeout_seconds=30,
+            )
+            if response_text:
+                return self._parse_claude_response(response_text, context)
+            logger.info("CLI proxy returned empty, trying SDK fallback")
+        except ImportError:
+            pass  # proxy module not available, use SDK
+        except Exception as e:
+            logger.info("CLI proxy failed (%s), trying SDK fallback", e)
+
+        # Fallback: anthropic SDK (requires ANTHROPIC_API_KEY + credits)
+        import anthropic
+        client = anthropic.Anthropic()
         message = client.messages.create(
             model=self._model,
             max_tokens=256,
             system=self._system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
-
         response_text = ""
         for block in message.content:
             if block.type == "text":
                 response_text += block.text
-
         return self._parse_claude_response(response_text, context)
 
     def _parse_claude_response(

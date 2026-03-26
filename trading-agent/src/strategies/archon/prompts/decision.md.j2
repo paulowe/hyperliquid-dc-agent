@@ -52,3 +52,6 @@ Recent trades:
 
 ## Your Task
 Analyze this {{ trigger_event_type }} event on {{ symbol }}. Should we trade the overshoot?
+
+IMPORTANT: Reply with ONLY a raw JSON object. No markdown, no analysis, no tables, no explanation outside the JSON. Example:
+{"action": "skip", "confidence": 0.35, "reasoning": "Late entry at top of range with weak trend", "tp_pct": 0.008, "sl_pct": 0.015}
