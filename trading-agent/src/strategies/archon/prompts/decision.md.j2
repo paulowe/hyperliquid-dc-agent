@@ -1,0 +1,54 @@
+# DC Event — {{ symbol }} @ ${{ "%.2f"|format(current_price) }}
+
+## Trigger
+- **{{ trigger_event_type }}** at ${{ "%.2f"|format(current_price) }}
+- DC move: ${{ "%.2f"|format(trigger_start_price) }} → ${{ "%.2f"|format(trigger_end_price) }} ({{ "%.2f"|format(trigger_move_pct) }}%)
+
+## Price Action ({{ tick_count }} ticks)
+- Range: ${{ "%.2f"|format(price_low) }} — ${{ "%.2f"|format(price_high) }} ({{ "%.2f"|format(range_pct) }}%)
+- 10-tick trend: {{ "%+.3f"|format(price_trend_pct) }}%
+- Current in range: {{ "%.0f"|format(range_position * 100) }}% (0%=bottom, 100%=top)
+- Regime: **{{ regime }}** (sensor rate: {{ "%.1f"|format(sensor_event_rate) }}/min)
+
+## Recent Price Ticks
+```
+{% for tick in recent_ticks -%}
+{{ "%.2f"|format(tick) }}{% if not loop.last %} → {% endif %}
+{%- if loop.index % 10 == 0 %}
+{% endif %}
+{%- endfor %}
+```
+
+## DC Event History ({{ dc_event_count }} events)
+- Up confirmations: {{ dc_up_count }} | Down: {{ dc_down_count }}
+{% if dc_up_count + dc_down_count > 0 -%}
+- Direction balance: {{ "%+d"|format(dc_up_count - dc_down_count) }} ({{ "positive = bullish, negative = bearish" }})
+{% endif -%}
+- Avg overshoot: {{ "%.3f"|format(avg_overshoot_pct) }}%
+{% if recent_dc_events %}
+Recent events:
+{% for ev in recent_dc_events -%}
+  {{ ev.event_type }} @ ${{ "%.2f"|format(ev.price) }} (overshoot: {{ "%.3f"|format(ev.overshoot_pct) }}%)
+{% endfor %}
+{%- endif %}
+
+## Trade History ({{ total_trades }} total)
+- Record: {{ win_count }}W / {{ loss_count }}L ({{ "%.0f"|format(win_rate) }}% WR)
+- Consecutive losses: {{ consecutive_losses }}
+- Net P&L: {{ "%+.2f"|format(net_pnl_pct) }}%
+{% if recent_trades %}
+Recent trades:
+{% for t in recent_trades -%}
+  {{ t.side }} {{ t.exit_reason }} {{ "%+.3f"|format(t.pnl_pct) }}% ({{ "%.0f"|format(t.duration_s) }}s)
+{% endfor %}
+{%- endif %}
+
+## Current Position
+{% if has_position -%}
+**{{ position_side }}** @ ${{ "%.2f"|format(position_entry) }} | Unrealized: {{ "%+.3f"|format(position_pnl_pct) }}%
+{% else -%}
+**FLAT** — ready for new entry
+{% endif %}
+
+## Your Task
+Analyze this {{ trigger_event_type }} event on {{ symbol }}. Should we trade the overshoot?

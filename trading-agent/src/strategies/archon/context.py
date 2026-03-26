@@ -88,61 +88,67 @@ class MarketContext:
     position_entry: Optional[float] = None
     position_pnl_pct: Optional[float] = None
 
+    def to_template_data(self) -> Dict[str, Any]:
+        """Export context as a flat dict for Jinja2 template rendering."""
+        trigger_start = self.trigger_event.get("start_price", self.current_price)
+        trigger_end = self.trigger_event.get("end_price", self.current_price)
+        trigger_move = (trigger_end - trigger_start) / trigger_start * 100 if trigger_start else 0
+
+        range_width = self.price_high - self.price_low
+        range_pct = range_width / self.price_low * 100 if self.price_low else 0
+        range_pos = ((self.current_price - self.price_low) / range_width
+                     if range_width > 0 else 0.5)
+
+        win_rate = (self.win_count / self.total_trades * 100
+                    if self.total_trades > 0 else 0)
+
+        return {
+            "symbol": self.symbol,
+            "current_price": self.current_price,
+            "timestamp": self.timestamp,
+            # Price action
+            "price_high": self.price_high,
+            "price_low": self.price_low,
+            "price_mean": self.price_mean,
+            "price_trend_pct": self.price_trend_pct,
+            "range_pct": range_pct,
+            "range_position": range_pos,
+            "tick_count": self.tick_count,
+            # Trigger event
+            "trigger_event_type": self.trigger_event.get("event_type", "N/A"),
+            "trigger_start_price": trigger_start,
+            "trigger_end_price": trigger_end,
+            "trigger_move_pct": trigger_move,
+            # DC events
+            "dc_event_count": len(self.recent_dc_events),
+            "recent_dc_events": self.recent_dc_events[-5:],
+            "dc_up_count": self.dc_up_count,
+            "dc_down_count": self.dc_down_count,
+            "avg_overshoot_pct": self.avg_overshoot_pct,
+            # Regime
+            "regime": self.regime,
+            "sensor_event_rate": self.sensor_event_rate,
+            # Trades
+            "recent_trades": self.recent_trades[-5:],
+            "total_trades": self.total_trades,
+            "win_count": self.win_count,
+            "loss_count": self.loss_count,
+            "win_rate": win_rate,
+            "consecutive_losses": self.consecutive_losses,
+            "net_pnl_pct": self.net_pnl_pct,
+            # Position
+            "has_position": self.has_position,
+            "position_side": self.position_side,
+            "position_entry": self.position_entry or 0,
+            "position_pnl_pct": self.position_pnl_pct or 0,
+            # Recent ticks for price shape visualization
+            "recent_ticks": getattr(self, '_recent_tick_prices', [])
+        }
+
     def to_prompt_text(self) -> str:
-        """Format context as structured text for Claude prompt."""
-        lines = [
-            f"## Market Context — {self.symbol} @ ${self.current_price:.2f}",
-            "",
-            f"### Price Action (last {self.tick_count} ticks)",
-            f"- Range: ${self.price_low:.2f} — ${self.price_high:.2f}",
-            f"- Trend: {self.price_trend_pct:+.3f}%",
-            f"- Regime: {self.regime} (sensor rate: {self.sensor_event_rate:.1f}/min)",
-            "",
-            f"### Trigger Event",
-            f"- Type: {self.trigger_event.get('event_type', 'N/A')}",
-            f"- Price moved: ${self.trigger_event.get('start_price', 0):.2f} → "
-            f"${self.trigger_event.get('end_price', 0):.2f}",
-            "",
-            f"### Recent DC Events ({len(self.recent_dc_events)} events)",
-            f"- Up confirmations: {self.dc_up_count} | Down confirmations: {self.dc_down_count}",
-            f"- Avg overshoot: {self.avg_overshoot_pct:.3f}%",
-        ]
-
-        if self.recent_dc_events:
-            lines.append("- Recent:")
-            for ev in self.recent_dc_events[-5:]:
-                lines.append(
-                    f"  {ev['event_type']} @ ${ev['price']:.2f} "
-                    f"(overshoot: {ev.get('overshoot_pct', 0):.3f}%)"
-                )
-
-        lines.extend([
-            "",
-            f"### Trade History ({self.total_trades} total)",
-            f"- Wins: {self.win_count} | Losses: {self.loss_count}",
-            f"- Consecutive losses: {self.consecutive_losses}",
-            f"- Net P&L: {self.net_pnl_pct:+.3f}%",
-        ])
-
-        if self.recent_trades:
-            lines.append("- Recent trades:")
-            for t in self.recent_trades[-5:]:
-                lines.append(
-                    f"  {t['side']} {t['exit_reason']} "
-                    f"pnl={t['pnl_pct']:+.3f}% ({t['duration_s']:.0f}s)"
-                )
-
-        if self.has_position:
-            lines.extend([
-                "",
-                f"### Current Position",
-                f"- {self.position_side} @ ${self.position_entry:.2f}",
-                f"- Unrealized P&L: {self.position_pnl_pct:+.3f}%",
-            ])
-        else:
-            lines.extend(["", "### Current Position: FLAT"])
-
-        return "\n".join(lines)
+        """Render context through Jinja2 decision template."""
+        from strategies.archon.prompts import render_decision_prompt
+        return render_decision_prompt(self.to_template_data())
 
 
 class ContextBuilder:
@@ -317,7 +323,10 @@ class ContextBuilder:
         regime = self.get_regime(now)
         sensor_rate = self.get_sensor_rate(now)
 
-        return MarketContext(
+        # Last 20 tick prices for price shape visualization in prompt
+        recent_tick_prices = prices[-20:] if len(prices) >= 20 else prices
+
+        mc = MarketContext(
             current_price=current_price,
             timestamp=now,
             symbol=self.symbol,
@@ -344,3 +353,6 @@ class ContextBuilder:
             position_entry=position_entry,
             position_pnl_pct=pos_pnl,
         )
+        # Attach recent tick prices for template rendering
+        mc._recent_tick_prices = recent_tick_prices
+        return mc
