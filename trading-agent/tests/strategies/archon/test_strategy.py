@@ -24,6 +24,7 @@ def make_config(**overrides):
         "use_ai": False,  # Use heuristic for tests
         "direction_filter": "long",
         "cooldown_seconds": 0,
+        "min_confidence": 0.5,  # Low threshold for tests (live default is 0.6)
         "max_consecutive_losses": 3,
         "context_ticks": 20,
         "context_dc_events": 10,
@@ -146,6 +147,32 @@ class TestAsyncDecisions:
             strategy.process_dc_event_async(event, 40.5, time.time())
         )
         assert signal is None  # cooldown active
+
+    def test_min_confidence_gates_heuristic_entries(self):
+        """Heuristic entries below min_confidence must be skipped.
+
+        Live-validated bug: heuristic returned conf=0.55/0.58 entries
+        that bypassed the 0.60 threshold, causing two -1.5% losses.
+        """
+        strategy = ArchonStrategy(make_config(
+            direction_filter="long",
+            min_confidence=0.6,
+        ))
+        strategy.start()
+        strategy._context.record_tick(40.0, 999.0)
+
+        # Simulate an entry where heuristic has low confidence
+        # (no trend boost, "high in range" penalty)
+        event = {"event_type": "PDCC2_UP", "price": 40.5,
+                 "start_price": 39.7, "end_price": 40.5}
+        signal = asyncio.run(
+            strategy.process_dc_event_async(event, 40.5, 1001.0)
+        )
+        # The heuristic base is 0.58. Without strong trend alignment
+        # the confidence stays below 0.60 and should be skipped.
+        if signal is not None:
+            # If a signal was produced, confidence must be >= 0.6
+            assert signal.metadata["confidence"] >= 0.6
 
 
 class TestTradeExecution:

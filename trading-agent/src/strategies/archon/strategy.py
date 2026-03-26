@@ -232,6 +232,17 @@ class ArchonStrategy(TradingStrategy):
             except Exception:
                 pass
 
+        # Confidence gate — applies to ALL sources (Claude and heuristic)
+        if decision.action in ("enter_long", "enter_short"):
+            if decision.confidence < self._cfg.min_confidence:
+                logger.info(
+                    "Archon: SKIPPED %s — confidence %.2f < %.2f threshold (%s)",
+                    decision.action, decision.confidence,
+                    self._cfg.min_confidence, decision.reasoning,
+                )
+                self._skip_count += 1
+                return None
+
         # Cooldown check
         if ts - self._last_entry_time < self._cfg.cooldown_seconds:
             if decision.action in ("enter_long", "enter_short"):
