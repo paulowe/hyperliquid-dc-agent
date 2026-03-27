@@ -149,6 +149,14 @@ class ArchonReasoner:
         action = data.get("action", "skip")
         confidence = float(data.get("confidence", 0.0))
 
+        # Normalize action — Claude sometimes returns "trade" or "short" instead
+        # of the exact "enter_long"/"enter_short" format
+        event_type = context.trigger_event.get("event_type", "")
+        if action in ("trade", "enter", "buy", "long"):
+            action = "enter_long" if event_type == "PDCC2_UP" else "enter_short"
+        elif action in ("short", "sell"):
+            action = "enter_short"
+
         # Apply direction filter
         if self._direction_filter == "long" and action == "enter_short":
             action = "skip"

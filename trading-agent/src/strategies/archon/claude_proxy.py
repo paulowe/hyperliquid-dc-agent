@@ -81,8 +81,10 @@ def claude_cli_query(
         sys_path = f.name
 
     try:
-        # Build command — unset CLAUDECODE to avoid nesting check
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        # Unset CLAUDECODE (avoid nesting check) and ANTHROPIC_API_KEY
+        # (forces CLI to use Max subscription auth, not the zero-credit API key)
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("CLAUDECODE", "ANTHROPIC_API_KEY")}
 
         cmd = [
             "claude",
