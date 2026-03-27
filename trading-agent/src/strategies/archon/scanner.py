@@ -152,6 +152,45 @@ async def main():
     logger.info("Position   : $%.0f @ %dx | Direction: LONG only", args.position_size, args.leverage)
     logger.info("=" * 70)
 
+    # Initialize exchange adapter for live trading
+    adapter = None
+    if not args.observe_only:
+        private_key = os.environ.get("HYPERLIQUID_MAINNET_PRIVATE_KEY", "")
+        if not private_key:
+            logger.error("HYPERLIQUID_MAINNET_PRIVATE_KEY not set — cannot trade live")
+            sys.exit(1)
+
+        from exchanges.hyperliquid.adapter import HyperliquidAdapter
+        from hyperliquid.info import Info
+        from hyperliquid.exchange import Exchange
+        from eth_account import Account
+
+        wallet = Account.from_key(private_key)
+        base_url = "https://api.hyperliquid.xyz"
+        adapter = HyperliquidAdapter(private_key=private_key, testnet=False)
+        adapter.info = Info(base_url, skip_ws=True)
+
+        if args.vault_address:
+            adapter.exchange = Exchange(wallet, base_url, vault_address=args.vault_address)
+            logger.info("SUB-ACCOUNT: orders → %s", args.vault_address[:14] + "...")
+        else:
+            account_addr = os.environ.get("MAINNET_ACCOUNT_ADDRESS", "")
+            if account_addr and account_addr.lower() != wallet.address.lower():
+                adapter.exchange = Exchange(wallet, base_url, account_address=account_addr)
+            else:
+                adapter.exchange = Exchange(wallet, base_url)
+
+        adapter.is_connected = True
+        adapter._build_precision_cache()
+
+        # Set leverage for all symbols
+        for sym in symbols:
+            try:
+                result = adapter.exchange.update_leverage(args.leverage, sym, is_cross=True)
+                logger.info("Leverage %dx set for %s", args.leverage, sym)
+            except Exception as e:
+                logger.warning("Failed to set leverage for %s: %s", sym, e)
+
     reconnect_count = 0
     subscribe_msg = json.dumps({"method": "subscribe", "subscription": {"type": "allMids"}})
 
@@ -237,6 +276,19 @@ async def main():
                                         sym, signal.metadata.get("side", "?"),
                                         price, signal.reason, pnl * 100,
                                     )
+
+                                    # Live: close position on exchange
+                                    if adapter and active_symbol == sym:
+                                        try:
+                                            close_size = signal.size
+                                            close_side = signal.metadata.get("side", "LONG")
+                                            # To close a LONG, sell; to close a SHORT, buy
+                                            is_buy = close_side == "SHORT"
+                                            result = adapter.exchange.market_close(sym)
+                                            logger.info("Close order result: %s", result)
+                                        except Exception as e:
+                                            logger.error("CLOSE ORDER FAILED: %s", e)
+
                                     trade_log.append({
                                         "symbol": sym, "action": "close",
                                         "price": price, "pnl_pct": pnl,
@@ -252,17 +304,57 @@ async def main():
                                         "*** %s ENTRY: %s @ %.2f | conf=%.2f | %s",
                                         sym, side, price, conf, signal.reason,
                                     )
-                                    trade_log.append({
-                                        "symbol": sym, "action": side,
-                                        "price": price, "confidence": conf,
-                                        "reason": signal.reason, "time": ts,
-                                    })
 
                                     if args.observe_only:
                                         strat.on_trade_executed(signal, price, signal.size, timestamp=ts)
                                         total_trades += 1
                                         active_symbol = sym
                                         active_strategy = strat
+                                    elif adapter:
+                                        # Live: place market order on exchange
+                                        try:
+                                            is_buy = signal.signal_type == SignalType.BUY
+                                            sz = signal.size
+                                            # Round size to exchange precision
+                                            sz_info = adapter.info.meta_and_asset_ctxs()
+                                            sz_decimals = 4  # default
+                                            if sz_info and len(sz_info) >= 2:
+                                                for i, asset in enumerate(sz_info[0].get("universe", [])):
+                                                    if asset["name"] == sym:
+                                                        sz_decimals = asset.get("szDecimals", 4)
+                                                        break
+                                            sz = round(sz, sz_decimals)
+
+                                            result = adapter.exchange.market_open(
+                                                sym, is_buy, sz, None, 0.01
+                                            )
+                                            logger.info("Order result: %s", result)
+
+                                            # Check if fill happened
+                                            if result.get("status") == "ok":
+                                                fills = result.get("response", {}).get("data", {}).get("statuses", [])
+                                                if fills and "filled" in str(fills[0]):
+                                                    fill_price = float(fills[0].get("filled", {}).get("avgPx", price))
+                                                    strat.on_trade_executed(signal, fill_price, sz, timestamp=ts)
+                                                    total_trades += 1
+                                                    active_symbol = sym
+                                                    active_strategy = strat
+                                                    logger.info(
+                                                        "*** FILLED: %s %s %.6f @ %.2f",
+                                                        sym, side, sz, fill_price,
+                                                    )
+                                                else:
+                                                    logger.warning("Order ok but no fill: %s", fills)
+                                            else:
+                                                logger.error("Order rejected: %s", result)
+                                        except Exception as e:
+                                            logger.error("ORDER FAILED: %s — %s", sym, e)
+
+                                    trade_log.append({
+                                        "symbol": sym, "action": side,
+                                        "price": price, "confidence": conf,
+                                        "reason": signal.reason, "time": ts,
+                                    })
 
                         # Status log every 100 ticks (based on first symbol)
                         first_count = tick_counts.get(symbols[0], 0)
