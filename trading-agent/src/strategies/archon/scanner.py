@@ -60,7 +60,8 @@ def parse_args():
     parser.add_argument("--threshold", type=float, default=0.02,
                         help="Default DC threshold (overridden by --thresholds)")
     parser.add_argument("--thresholds", type=str, default="",
-                        help="Per-symbol thresholds, e.g. 'HYPE:0.02,SOL:0.015,TAO:0.025'")
+                        help="Per-symbol thresholds. Symmetric: 'SOL:0.012'. "
+                             "Asymmetric: 'SOL:0.010/0.015' (down/up)")
     parser.add_argument("--sensor-threshold", type=float, default=0.004)
     parser.add_argument("--position-size", type=float, default=10.0)
     parser.add_argument("--leverage", type=int, default=5)
@@ -85,23 +86,32 @@ async def main():
 
     symbols = [s.strip() for s in args.symbols.split(",")]
 
-    # Parse per-symbol thresholds: "HYPE:0.02,SOL:0.015,TAO:0.025"
-    symbol_thresholds: dict[str, float] = {}
+    # Parse per-symbol thresholds: "SOL:0.012" or asymmetric "SOL:0.010/0.015"
+    symbol_thresholds: dict[str, tuple[float, float]] = {}
     if args.thresholds:
         for pair in args.thresholds.split(","):
-            sym_thresh = pair.strip().split(":")
-            if len(sym_thresh) == 2:
-                symbol_thresholds[sym_thresh[0].strip()] = float(sym_thresh[1].strip())
+            parts = pair.strip().split(":")
+            if len(parts) == 2:
+                sym = parts[0].strip()
+                vals = parts[1].strip().split("/")
+                if len(vals) == 2:
+                    # Asymmetric: down/up
+                    symbol_thresholds[sym] = (float(vals[0]), float(vals[1]))
+                else:
+                    # Symmetric
+                    v = float(vals[0])
+                    symbol_thresholds[sym] = (v, v)
 
     # Create one strategy instance per symbol
     strategies: dict[str, ArchonStrategy] = {}
     for sym in symbols:
-        threshold = symbol_thresholds.get(sym, args.threshold)
-        # Sensor threshold scales with trade threshold (roughly 1/5)
-        sensor = symbol_thresholds.get(sym, args.threshold) * 0.2 if sym in symbol_thresholds else args.sensor_threshold
+        thresh_pair = symbol_thresholds.get(sym, (args.threshold, args.threshold))
+        # Sensor threshold scales with average trade threshold (roughly 1/5)
+        avg_thresh = (thresh_pair[0] + thresh_pair[1]) / 2
+        sensor = avg_thresh * 0.2 if sym in symbol_thresholds else args.sensor_threshold
         config = {
             "symbol": sym,
-            "dc_threshold": [threshold, threshold],
+            "dc_threshold": list(thresh_pair),
             "sensor_threshold": [sensor, sensor],
             "position_size_usd": args.position_size,
             "leverage": args.leverage,
@@ -143,8 +153,14 @@ async def main():
     logger.info("Intelligence: %s (min conf: %.0f%%)", ai_mode, args.min_confidence * 100)
     logger.info("Symbols    : %s", ", ".join(symbols))
     if symbol_thresholds:
-        thresh_str = " | ".join(f"{s}={symbol_thresholds.get(s, args.threshold)*100:.1f}%" for s in symbols)
-        logger.info("Thresholds : %s", thresh_str)
+        parts = []
+        for s in symbols:
+            t = symbol_thresholds.get(s, (args.threshold, args.threshold))
+            if t[0] == t[1]:
+                parts.append(f"{s}={t[0]*100:.1f}%")
+            else:
+                parts.append(f"{s}=↓{t[0]*100:.1f}%/↑{t[1]*100:.1f}%")
+        logger.info("Thresholds : %s", " | ".join(parts))
     else:
         logger.info("Threshold  : %.2f%% (all symbols)", args.threshold * 100)
     logger.info("SL/TP      : %.2f%% / %.2f%% | Trail: %.0f%%",
