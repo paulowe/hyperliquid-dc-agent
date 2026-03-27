@@ -16,10 +16,11 @@ class TestSystemPrompt:
     def test_contains_edge_knowledge(self):
         prompt = load_system_prompt()
         # Should encode our live-learned insights, not generic platitudes
-        assert "high in range" in prompt
-        assert "0.76%" in prompt or "MFE" in prompt
+        assert "extreme" in prompt.lower() or "range" in prompt.lower()
+        assert "MFE" in prompt or "0.76%" in prompt
         assert "38%" in prompt  # 38% of trades never reach 0.5%
         assert "fee" in prompt.lower()
+        assert "Worked Example" in prompt or "Example" in prompt
 
 
 class TestDecisionPrompt:

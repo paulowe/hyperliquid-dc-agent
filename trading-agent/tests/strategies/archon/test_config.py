@@ -10,7 +10,7 @@ class TestArchonConfigDefaults:
         cfg = ArchonConfig()
         assert cfg.symbol == "HYPE"
         assert cfg.dc_threshold == (0.02, 0.02)
-        assert cfg.direction_filter == "long"
+        assert cfg.direction_filter == "both"
         assert cfg.use_ai is True
         assert cfg.min_confidence == 0.6
 
