@@ -112,7 +112,7 @@ async def main():
             "min_confidence": args.min_confidence,
             "use_ai": not args.no_ai,
             "model": args.model,
-            "direction_filter": "long",
+            "direction_filter": "both",
             "cooldown_seconds": 30,
             "max_consecutive_losses": 4,
         }
@@ -149,7 +149,7 @@ async def main():
         logger.info("Threshold  : %.2f%% (all symbols)", args.threshold * 100)
     logger.info("SL/TP      : %.2f%% / %.2f%% | Trail: %.0f%%",
                 args.sl_pct * 100, args.tp_pct * 100, args.trail_pct * 100)
-    logger.info("Position   : $%.0f @ %dx | Direction: LONG only", args.position_size, args.leverage)
+    logger.info("Position   : $%.0f @ %dx | Direction: BOTH (Claude decides)", args.position_size, args.leverage)
     logger.info("=" * 70)
 
     # Initialize exchange adapter for live trading

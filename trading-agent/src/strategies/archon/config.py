@@ -56,7 +56,7 @@ class ArchonConfig:
     # --- Safety ---
     cooldown_seconds: float = 30.0
     max_consecutive_losses: int = 4
-    direction_filter: str = "long"  # "long", "short", or "both"
+    direction_filter: str = "both"  # "long", "short", or "both"
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> ArchonConfig:
