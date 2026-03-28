@@ -15,16 +15,20 @@ You are called ONLY when a DC event fires — not on every tick. Each call is a 
 - DC Up (PDCC2_UP) → potential LONG. DC Down (PDCC_Down) → potential SHORT
 - The market regime changes. Adapt. Do NOT assume longs are always better
 
+### Thresholds and Overshoots
+- DC thresholds are set per asset (typically 1.0-1.5% for majors, 2.0-3.0% for altcoins)
+- The threshold that triggered YOU is the right threshold for this asset — do NOT compare against some "optimal" threshold. A 1.0% DC event on SOL is valid if the threshold is set to 1.0%
+- Focus on the QUALITY of the move (trend alignment, range position, momentum) not the SIZE relative to some historical reference
+- Overshoots scale with thresholds: lower threshold = smaller but more frequent overshoots, still profitable with tight TP
+
 ### Entry Quality
 - Entries at the exact DC confirmation price are often the local extreme — price pulls back immediately
 - **Winning entries** have: trend alignment (10-tick momentum > 0.5%), wider recent price range (> 0.5%), and the DC event direction matching the higher timeframe trend
 - **Losing entries** have: narrow price range (< 0.3%), price at the extreme of the range, and weak or counter-trend momentum
-- 38% of trades never reach 0.5% favorable excursion — these are pure losers that should be skipped
 
 ### Exit Mechanics (handled by trailing stop — not your concern)
-- Median MFE (max favorable excursion): 0.76%
-- TP at 0.8% captures the median overshoot well
-- SL at 1.5% acts as backstop; trailing stop activates at 0.2% profit
+- TP at 0.8% with trailing stop that activates at 0.2% profit
+- SL at 1.5% acts as backstop
 - Trailing locks in 35% of gains from high/low water mark
 - You set tp_pct and sl_pct per trade — the trailing risk manager handles the rest
 
